@@ -458,7 +458,7 @@
   <meta name="ai-tags" content="KV Cache, LLM, MoE, RMSNorm, 大模型, SwiGLU" />
   <meta name="description" content="彻底厘清 KV Cache 显存里真正存了什么、为什么历史 O 不重算也不缓存，再逐层解剖从 Attention 输出 o 经过 W_O、RMSNorm、SwiGLU/MoE、LM Head 到 Top-P / Min-P 采样的完整生命史。" />
   <meta name="ai-created" content="2026-11-26T06:50:03Z" />
-  <meta name="ai-updated" content="2026-11-26T06:50:07Z" />
+  <meta name="ai-updated" content="2026-11-26T06:55:57Z" />
 </head>
 <body>
 
@@ -733,4 +733,763 @@
           </div>
         </div>
         <div class="btn-group" id="scenarioToggle">
-          <button class="btn ac
+          <button class="btn active" data-sc="open">场景 A：开放续写（今天天气真___）</button>
+          <button class="btn" data-sc="fact">场景 B：高确定事实（中国的首都是___）</button>
+        </div>
+      </div>
+
+      <!-- Sampling Algorithm Tabs -->
+      <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+        <div class="btn-group" id="samplerTabs">
+          <button class="btn" data-sp="greedy">Greedy 贪心</button>
+          <button class="btn" data-sp="topk">Top-K 采样</button>
+          <button class="btn active" data-sp="topp">Top-P 核采样（最常用）</button>
+          <button class="btn" data-sp="minp">Min-P 动态下限</button>
+        </div>
+        <button class="btn-action" id="btnSampleDraw">🎲 抽签采样 1 个词（吐字！）</button>
+      </div>
+
+      <!-- Sliders -->
+      <div class="controls-bar">
+        <div class="slider-row">
+          <label>
+            <span>Temperature 温度 T（控制分布尖锐/发散度）</span>
+            <span class="val" id="tempReadout">T = 0.80</span>
+          </label>
+          <input type="range" id="tempSlider" min="0.10" max="2.00" step="0.05" value="0.80" />
+          <div style="font-size:11.5px;color:var(--text-dim);margin-top:4px;">
+            T 越小越严谨确定（趋近贪心）；T 越大分布越扁平（更有创意但易胡说）
+          </div>
+        </div>
+
+        <div class="slider-row" id="paramSliderBox">
+          <label>
+            <span id="paramLabel">Top-P 累计概率截断阈值</span>
+            <span class="val" id="paramReadout">P = 0.90</span>
+          </label>
+          <input type="range" id="paramSlider" min="0.10" max="1.00" step="0.05" value="0.90" />
+          <div style="font-size:11.5px;color:var(--text-dim);margin-top:4px;" id="paramHint"></div>
+        </div>
+      </div>
+
+      <!-- Live Probability Bars -->
+      <div class="prob-chart" id="probChart"></div>
+
+      <!-- Sampled Output & Loopback Banner -->
+      <div class="sample-output-box" id="sampleOutputBox"></div>
+
+      <div class="callout-amber" id="samplerInsight"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 04: END-TO-END AUTOREGRESSIVE LOOP SUMMARY
+       ======================================================== -->
+  <section id="sec-loop">
+    <div class="section-head">
+      <span class="section-num">04</span>
+      <h2>端到端闭环总结：一个 Token 完整的一生</h2>
+    </div>
+    <p class="section-desc">
+      把整个推理过程串成四句话，你就彻底打通了大模型从底层张量到屏幕打字机的全部任督二脉。
+    </p>
+
+    <div class="grid-4">
+      <div class="summary-card">
+        <div class="num" style="color:var(--emerald);">01</div>
+        <h4>只缓存成品 K 与 V</h4>
+        <p>每层各自存下历史 Token 的 K 和 V；历史 Q 和历史 O 永远不会再被读取，算完当前步就释放，绝不占持续显存。</p>
+      </div>
+      <div class="summary-card">
+        <div class="num" style="color:var(--cyan);">02</div>
+        <h4>每层 5 步精加工</h4>
+        <p>Attention 吐出 <code>o</code> 后，经 W_O 跨头混合 → 残差 → RMSNorm → SwiGLU/MoE 调取记忆与非线性推理 → 残差，传给下一层。</p>
+      </div>
+      <div class="summary-card">
+        <div class="num" style="color:var(--violet);">03</div>
+        <h4>顶层比对 15 万词典</h4>
+        <p>第 N 层走完 FFN 后，经 Final RMSNorm 校准，用 LM Head 与词表原型做点积算出 Logits，再按温度 T 转成概率。</p>
+      </div>
+      <div class="summary-card">
+        <div class="num" style="color:var(--amber);">04</div>
+        <h4>采样吐字并回流</h4>
+        <p>Top-P / Min-P 自适应砍掉长尾噪声词后抽签选出 1 个 Token ID；若非 <code>&lt;EOS&gt;</code>，立刻丢回第 1 层 Embedding 开启下一轮！</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    单文件离线交互式图解（下篇） · 涵盖 KV Cache 本质 / Transformer Block 后半段 / SwiGLU &amp; MoE / LM Head &amp; Decoding Sampling
+  </footer>
+</div>
+
+<script>
+/* =========================================================
+   LAB 1A: KV CACHE MATRIX X-RAY SVG
+   ========================================================= */
+function renderKvMatrix(mode) {
+  const svg = document.getElementById('kvMatrixSvg');
+  const note = document.getElementById('kvMatrixNote');
+
+  if (mode === 'cache') {
+    svg.innerHTML = `
+      <!-- q_t (1 x d) -->
+      <text x="80" y="34" fill="#fbbf24" font-size="13" font-weight="700" text-anchor="middle">当前 q_t (1 × d)</text>
+      <rect x="26" y="48" width="108" height="32" rx="6" fill="rgba(251,191,36,0.22)" stroke="#fbbf24" stroke-width="2"/>
+      <text x="80" y="69" fill="#fef3c7" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">q_4 (仅新词)</text>
+
+      <!-- Ghost discarded q_1..q_3 -->
+      <rect x="26" y="92" width="108" height="84" rx="6" fill="rgba(15,23,42,0.45)" stroke="rgba(100,116,139,0.35)" stroke-dasharray="4 4"/>
+      <text x="80" y="128" fill="#64748b" font-size="11.5" text-anchor="middle">历史 q₁, q₂, q₃</text>
+      <text x="80" y="148" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">无需算，无需存！</text>
+
+      <!-- Multiply sign -->
+      <text x="158" y="70" fill="#94a3b8" font-size="22" font-weight="700" text-anchor="middle">×</text>
+
+      <!-- K^T cache (d x t) -->
+      <text x="275" y="34" fill="#34d399" font-size="13" font-weight="700" text-anchor="middle">K_cacheᵀ (d × t)</text>
+      <rect x="184" y="48" width="136" height="128" rx="7" fill="rgba(52,211,153,0.16)" stroke="#34d399" stroke-width="1.8"/>
+      <text x="252" y="106" fill="#d1fae5" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">k₁ᵀ  k₂ᵀ  k₃ᵀ</text>
+      <text x="252" y="126" fill="#34d399" font-size="11" text-anchor="middle">直接读缓存 ✓</text>
+
+      <rect x="324" y="48" width="44" height="128" rx="7" fill="rgba(56,189,248,0.22)" stroke="#38bdf8" stroke-width="1.8"/>
+      <text x="346" y="108" fill="#e0f2fe" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">k₄ᵀ</text>
+      <text x="346" y="126" fill="#7dd3fc" font-size="10" text-anchor="middle">追加</text>
+
+      <!-- Arrow -> Softmax -->
+      <text x="404" y="70" fill="#94a3b8" font-size="18" font-weight="700" text-anchor="middle">→</text>
+      <text x="486" y="34" fill="#38bdf8" font-size="12.5" font-weight="700" text-anchor="middle">注意力权重 (1 × t)</text>
+      <rect x="430" y="48" width="112" height="32" rx="6" fill="rgba(56,189,248,0.2)" stroke="#38bdf8" stroke-width="1.8"/>
+      <text x="486" y="69" fill="#e0f2fe" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">[a₄₁ a₄₂ a₄₃ a₄₄]</text>
+      <text x="486" y="104" fill="#64748b" font-size="11" text-anchor="middle">只需算 1 行权重</text>
+      <text x="486" y="120" fill="#34d399" font-size="11" text-anchor="middle">无需算 t×t 大方阵!</text>
+
+      <!-- Multiply sign -->
+      <text x="568" y="70" fill="#94a3b8" font-size="22" font-weight="700" text-anchor="middle">×</text>
+
+      <!-- V cache (t x d) -->
+      <text x="654" y="34" fill="#34d399" font-size="13" font-weight="700" text-anchor="middle">V_cache (t × d)</text>
+      <rect x="594" y="48" width="120" height="92" rx="7" fill="rgba(52,211,153,0.16)" stroke="#34d399" stroke-width="1.8"/>
+      <text x="654" y="88" fill="#d1fae5" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">v₁ / v₂ / v₃</text>
+      <text x="654" y="108" fill="#34d399" font-size="11" text-anchor="middle">直接读缓存 ✓</text>
+
+      <rect x="594" y="144" width="120" height="32" rx="7" fill="rgba(56,189,248,0.22)" stroke="#38bdf8" stroke-width="1.8"/>
+      <text x="654" y="164" fill="#e0f2fe" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">v₄ (新追加)</text>
+
+      <!-- Equals -->
+      <text x="742" y="70" fill="#94a3b8" font-size="22" font-weight="700" text-anchor="middle">=</text>
+
+      <!-- Final o_t (1 x d) -->
+      <text x="832" y="34" fill="#a78bfa" font-size="13" font-weight="700" text-anchor="middle">输出 o_t (1 × d)</text>
+      <rect x="772" y="48" width="120" height="34" rx="7" fill="rgba(167,139,250,0.25)" stroke="#a78bfa" stroke-width="2.2"/>
+      <text x="832" y="70" fill="#fff" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">o_4 (精准直出)</text>
+
+      <rect x="772" y="94" width="120" height="82" rx="6" fill="rgba(15,23,42,0.45)" stroke="rgba(100,116,139,0.35)" stroke-dasharray="4 4"/>
+      <text x="832" y="128" fill="#64748b" font-size="11.5" text-anchor="middle">历史 o₁, o₂, o₃</text>
+      <text x="832" y="148" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">既不算，也不存！</text>
+
+      <!-- Bottom summary bar -->
+      <rect x="26" y="198" width="866" height="38" rx="9" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.35)"/>
+      <text x="459" y="222" fill="#d1fae5" font-size="12.5" font-weight="700" text-anchor="middle">
+        算力降维打击：只做 [1×d] × [d×t] × [t×d] → [1×d] 向量矩阵乘，复杂度从 O(t²d) 暴降至 O(td)！
+      </text>
+    `;
+    note.className = 'callout-emerald';
+    note.innerHTML = `<strong>一眼看懂为何只有 KV：</strong>公式 <code>o₄ = softmax(q₄ · K₁:₄ᵀ / √d) · V₁:₄</code> 中，<strong>根本找不到历史 q₁~q₃ 和历史 o₁~o₃ 的身影</strong>！我们只需把每层现算出的 k₄、v₄ 追加到绿色的 KV Cache 末尾，q₄ 和 o₄ 跑完当前这一步就立刻销毁。`;
+  } else {
+    svg.innerHTML = `
+      <!-- Full Q (t x d) -->
+      <text x="80" y="34" fill="#fb7185" font-size="13" font-weight="700" text-anchor="middle">全量 Q (t × d)</text>
+      <rect x="26" y="48" width="108" height="92" rx="6" fill="rgba(251,113,133,0.14)" stroke="rgba(251,113,133,0.5)"/>
+      <text x="80" y="88" fill="#fda4af" font-size="11.5" font-family="monospace" text-anchor="middle">q₁ / q₂ / q₃</text>
+      <text x="80" y="108" fill="#fb7185" font-size="10.5" font-weight="700" text-anchor="middle">白白重算 ✗</text>
+      <rect x="26" y="144" width="108" height="32" rx="6" fill="rgba(251,191,36,0.22)" stroke="#fbbf24" stroke-width="1.8"/>
+      <text x="80" y="164" fill="#fef3c7" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">q₄</text>
+
+      <text x="158" y="114" fill="#94a3b8" font-size="22" font-weight="700" text-anchor="middle">×</text>
+
+      <!-- Full K^T -->
+      <text x="270" y="34" fill="#fb7185" font-size="13" font-weight="700" text-anchor="middle">全量重算 Kᵀ (d × t)</text>
+      <rect x="184" y="48" width="172" height="128" rx="7" fill="rgba(251,113,133,0.14)" stroke="rgba(251,113,133,0.5)"/>
+      <text x="270" y="106" fill="#fda4af" font-size="12" font-family="monospace" text-anchor="middle">k₁ᵀ  k₂ᵀ  k₃ᵀ  k₄ᵀ</text>
+      <text x="270" y="128" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">每步从头重算 ✗</text>
+
+      <text x="386" y="114" fill="#94a3b8" font-size="18" font-weight="700" text-anchor="middle">→</text>
+
+      <!-- Full t x t Attention Matrix -->
+      <text x="472" y="34" fill="#fb7185" font-size="12.5" font-weight="700" text-anchor="middle">庞大矩阵 A (t × t)</text>
+      <rect x="412" y="48" width="120" height="92" rx="6" fill="rgba(251,113,133,0.14)" stroke="rgba(251,113,133,0.5)"/>
+      <text x="472" y="90" fill="#fda4af" font-size="11" text-anchor="middle">前 t-1 行权重</text>
+      <text x="472" y="108" fill="#fb7185" font-size="10.5" font-weight="700" text-anchor="middle">全是无用功 ✗</text>
+      <rect x="412" y="144" width="120" height="32" rx="6" fill="rgba(56,189,248,0.2)" stroke="#38bdf8" stroke-width="1.8"/>
+      <text x="472" y="164" fill="#e0f2fe" font-size="11" font-family="monospace" text-anchor="middle">第 4 行 (唯一有用)</text>
+
+      <text x="558" y="114" fill="#94a3b8" font-size="22" font-weight="700" text-anchor="middle">×</text>
+
+      <!-- Full V -->
+      <text x="646" y="34" fill="#fb7185" font-size="13" font-weight="700" text-anchor="middle">全量重算 V (t × d)</text>
+      <rect x="586" y="48" width="120" height="128" rx="7" fill="rgba(251,113,133,0.14)" stroke="rgba(251,113,133,0.5)"/>
+      <text x="646" y="106" fill="#fda4af" font-size="12" font-family="monospace" text-anchor="middle">v₁ / v₂ / v₃ / v₄</text>
+      <text x="646" y="128" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">每步从头重算 ✗</text>
+
+      <text x="734" y="114" fill="#94a3b8" font-size="22" font-weight="700" text-anchor="middle">=</text>
+
+      <!-- Full O where top t-1 rows are thrown away -->
+      <text x="826" y="34" fill="#fb7185" font-size="13" font-weight="700" text-anchor="middle">全量输出 O (t × d)</text>
+      <rect x="764" y="48" width="126" height="92" rx="6" fill="rgba(251,113,133,0.2)" stroke="#fb7185" stroke-width="1.8" stroke-dasharray="4 3"/>
+      <text x="827" y="88" fill="#ffe4e6" font-size="11.5" font-family="monospace" text-anchor="middle">o₁ / o₂ / o₃</text>
+      <text x="827" y="108" fill="#fb7185" font-size="11" font-weight="800" text-anchor="middle">算完直接扔掉！</text>
+      <rect x="764" y="144" width="126" height="32" rx="6" fill="rgba(167,139,250,0.28)" stroke="#a78bfa" stroke-width="2"/>
+      <text x="827" y="164" fill="#fff" font-size="12" font-family="monospace" font-weight="800" text-anchor="middle">o₄ (只要这一行)</text>
+
+      <rect x="26" y="198" width="864" height="38" rx="9" fill="rgba(251,113,133,0.12)" stroke="rgba(251,113,133,0.4)"/>
+      <text x="458" y="222" fill="#ffe4e6" font-size="12.5" font-weight="700" text-anchor="middle">
+        巨大浪费：辛辛苦苦重算了前面 t-1 行 o₁~o₃，最后为了预测第 5 个词却只取最后一行 o₄，前 t-1 行全部作废！
+      </text>
+    `;
+    note.className = 'callout-amber';
+    note.innerHTML = `<strong>这就是容易产生误解的地方：</strong>在“无缓存傻算”时，我们算出了完整的 <code>[o₁, o₂, o₃, o₄]</code>，并发现 <code>o₁~o₃</code> 跟上一步一模一样——但这<strong>并不是</strong>因为我们要缓存 <code>o₁~o₃</code> 去复用，而是因为<strong>我们根本就不该算它们，也不需要留着它们</strong>！`;
+  }
+}
+
+document.querySelectorAll('#kvMatrixMode .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#kvMatrixMode .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderKvMatrix(btn.dataset.mode);
+  });
+});
+renderKvMatrix('cache');
+
+/* =========================================================
+   LAB 1B: 3-LAYER DECODE STEPPER
+   ========================================================= */
+const LAYER_TOKENS = ['我', '爱', '机器', '学习'];
+const NEXT_PREDS = ['爱', '机器', '学习', '！'];
+let curLayerStep = 4; // Start at step 4 so the user sees past cached KVs + active column immediately
+
+function renderLayerGrid() {
+  const grid = document.getElementById('layerGrid');
+  let html = `<div class="lg-head" style="background:transparent;border:none;">层 \\ 时间步</div>`;
+  LAYER_TOKENS.forEach((tok, idx) => {
+    const stepNum = idx + 1;
+    const isCur = stepNum === curLayerStep;
+    html += `<div class="lg-head ${isCur ? 'active-col' : ''}">Step ${stepNum}:「${tok}」${isCur ? ' 🔥' : ''}</div>`;
+  });
+
+  // Top Output Row: LM Head Prediction
+  html += `<div class="lg-row-label" style="color:var(--violet);border-color:rgba(167,139,250,0.35);">LM Head<br/>吐出下词</div>`;
+  LAYER_TOKENS.forEach((_, idx) => {
+    const stepNum = idx + 1;
+    if (stepNum < curLayerStep) {
+      html += `<div class="lg-cell" style="opacity:0.65;">
+        <span style="color:var(--emerald);font-weight:700;">已输出「${NEXT_PREDS[idx]}」</span>
+        <span class="ghost-badge">o_${stepNum} 已销毁</span>
+      </div>`;
+    } else if (stepNum === curLayerStep) {
+      html += `<div class="lg-cell cur-cell" style="border-color:var(--violet);background:rgba(167,139,250,0.2);">
+        <span style="color:#fff;font-weight:800;">猜出「${NEXT_PREDS[idx]}」</span>
+        <span style="font-size:10.5px;color:#ddd6fe;">仅用 o_${stepNum}^(3)</span>
+      </div>`;
+    } else {
+      html += `<div class="lg-cell future-cell">尚未到达</div>`;
+    }
+  });
+
+  // 3 Transformer Layers (drawn Layer 3 down to Layer 1 so upward flow feels intuitive!)
+  [3, 2, 1].forEach(layerNum => {
+    html += `<div class="lg-row-label">Layer ${layerNum}<br/><span style="font-size:10px;opacity:.75;">独立缓存</span></div>`;
+    LAYER_TOKENS.forEach((_, idx) => {
+      const stepNum = idx + 1;
+      if (stepNum < curLayerStep) {
+        html += `<div class="lg-cell past-cell">
+          <span class="kv-badge">存 K_${stepNum}^(${layerNum}), V_${stepNum}^(${layerNum})</span>
+          <span class="ghost-badge">q_${stepNum}, o_${stepNum} 已扔</span>
+        </div>`;
+      } else if (stepNum === curLayerStep) {
+        html += `<div class="lg-cell cur-cell">
+          <span class="active-beam">← 读左 K,V | 算 o_${stepNum}^(${layerNum}) ↑</span>
+          <span class="kv-badge" style="background:rgba(56,189,248,0.22);color:#e0f2fe;border-color:var(--cyan);">+存入 K_${stepNum}, V_${stepNum}</span>
+        </div>`;
+      } else {
+        html += `<div class="lg-cell future-cell">等待生成</div>`;
+      }
+    });
+  });
+
+  grid.innerHTML = html;
+  document.getElementById('btnStepLayer').disabled = curLayerStep >= LAYER_TOKENS.length;
+}
+
+document.getElementById('btnStepLayer').addEventListener('click', () => {
+  if (curLayerStep < LAYER_TOKENS.length) { curLayerStep++; renderLayerGrid(); }
+});
+document.getElementById('btnResetLayer').addEventListener('click', () => {
+  curLayerStep = 1; renderLayerGrid();
+});
+renderLayerGrid();
+
+/* =========================================================
+   SECTION 2: 5 STEPS AFTER GENERATING o
+   ========================================================= */
+const AFTER_O_STEPS = {
+  wo: {
+    badge: '<span class="tag tag-cyan">Step 1 · 跨头混合与坐标对齐</span>',
+    title: '输出线性投影（Concat + W_O 矩阵乘）',
+    formula: 'AttnOut = Concat(head₁, head₂, …, head_H) · W_O   ∈ ℝ^(1 × d_model)',
+    why: '<strong>为什么一定要乘 W_O？</strong>刚才计算多头注意力时，第 1 个头（找主语）、第 2 个头（看语法）、第 3 个头（看标点）都在各自孤立的子空间里算，直接拼在一起（Concat）彼此并未交流。乘以 <code>W_O</code> 既能让所有头的信息充分混合，又把维度精准对齐回残差流主干道的统一坐标系。',
+    metaphor: '<strong>形象类比：</strong>32 位专项顾问各自写完一份报告（32 个 Head），<code>W_O</code> 就是项目总监，把 32 份报告融合成一份统一格式的会议纪要。'
+  },
+  res1: {
+    badge: '<span class="tag tag-emerald">Step 2 · 信息保留与梯度直通</span>',
+    title: '第一次残差相加（First Residual Add）',
+    formula: "h' = x_in + AttnOut",
+    why: '<strong>原理：</strong>不把当前 Token 原来的表示 <code>x_in</code> 推倒重来，而是把刚刚开会听来的上下文增量 <code>AttnOut</code> 累加到原表示上。同时，反向传播时恒等项 1 保证了梯度无衰减回传至浅层。',
+    metaphor: '<strong>形象类比：</strong>把刚写好的会议纪要，直接“批注”到这个词原来的个人档案上，而不是撕掉原档案重写。'
+  },
+  norm2: {
+    badge: '<span class="tag tag-amber">Step 3 · 数值稳定生命线</span>',
+    title: '第二次前置归一化（RMSNorm）',
+    formula: "u = RMSNorm(h') = [ h' / √( (1/d) ∑(h'_j)² + ε ) ] ⊙ γ",
+    why: '<strong>原理：</strong>做完残差相加后，向量的数值方差与模长会持续增大。在进入非线性剧烈的 FFN 前，用 RMSNorm 迅速把向量模长缩放回标准尺度。现代 LLM 舍弃了传统 LayerNorm 的“减均值”步骤，只保留均方根缩放，效果无损且 GPU 算子更快。注意：主干道上的 <code>h\'</code> 本身不受干扰，只把归一化副本 <code>u</code> 送进 FFN。',
+    metaphor: '<strong>形象类比：</strong>进入高压精密车间（FFN）前先过一道稳压器，保证电压平稳不烧电路。'
+  },
+  ffn: {
+    badge: '<span class="tag tag-violet">Step 4 · 非线性推理与知识记忆库</span>',
+    title: '前馈神经网络（SwiGLU 稠密 FFN / MoE 混合专家）',
+    formula: 'SwiGLU: ( SiLU(u·W_gate) ⊙ (u·W_up) ) · W_down   ｜   MoE: ∑_{i∈TopK} g_i · FFN_i(u)',
+    why: '<strong>原理：</strong>Attention 只是跨词的线性加权平均，缺乏复杂逻辑合成能力。FFN 先把向量<strong>升维 2.67~4 倍</strong>，把重叠在一起的语义特征摊开，通过门控开关（SiLU）做非线性筛选并调取编码在权重里的世界事实知识，再降维压缩回 <code>d_model</code>。万亿大模型则把单个 FFN 拆成几十上百个专家（MoE），每次只唤醒 Top-K 个。',
+    metaphor: '<strong>形象类比：</strong>开完圆桌会（Attention），每个词回到自己工位翻阅长期知识库、独立思考推理（见下方交互实验 3！）。'
+  },
+  res2: {
+    badge: '<span class="tag tag-emerald">Step 5 · 本层收官与流向分岔</span>',
+    title: '第二次残差相加 → 交棒给下一层（或离开堆叠区）',
+    formula: "x_out = h' + FFNOut",
+    why: '<strong>关键分岔口：</strong><br/>• 如果当前是<strong>中间层（Layer 1 ~ N-1）</strong>：<code>x_out</code> 直接作为下一层的输入 <code>x_in</code>，马上进入下一层的 RMSNorm → 生成新的 Q, K, V → Attention！<br/>• 如果当前是<strong>最后一层（Layer N）</strong>：<code>x_out</code> 即为整座大厦产出的终极隐藏向量 <code>h_final</code>，立刻送往下文的 <strong>Step 6~9 解码吐字流水线</strong>！',
+    metaphor: '<strong>形象类比：</strong>独立思考完把最终结论再次写回个人档案——若还没到顶楼就乘电梯去下一层；若已到顶楼就直接推门去发言台吐字！'
+  }
+};
+
+function renderAfterOStep(key) {
+  const d = AFTER_O_STEPS[key];
+  document.getElementById('afterODetail').innerHTML = `
+    <div style="margin-bottom:8px;">${d.badge}</div>
+    <h3 style="font-size:18px;margin-bottom:8px;">${d.title}</h3>
+    <div class="formula-box">${d.formula}</div>
+    <p style="font-size:14px;color:var(--text-muted);margin-bottom:10px;">${d.why}</p>
+    <div class="callout-emerald" style="margin-top:8px;">${d.metaphor}</div>
+  `;
+}
+
+document.querySelectorAll('#afterOStepper .step-pill').forEach(p => {
+  p.addEventListener('click', () => {
+    document.querySelectorAll('#afterOStepper .step-pill').forEach(x => x.classList.remove('active'));
+    p.classList.add('active');
+    renderAfterOStep(p.dataset.step);
+  });
+});
+renderAfterOStep('wo');
+
+/* =========================================================
+   LAB 2: SWIGLU GATE VS MOE ROUTER
+   ========================================================= */
+const FFN_DATA = {
+  paris: {
+    label: '“法国的首都是___”',
+    neurons: [
+      { name: '欧洲地理', gate: 0.96, up: '激活' },
+      { name: '首都映射', gate: 0.92, up: '激活' },
+      { name: 'Python语法', gate: 0.04, up: '静默' },
+      { name: '唐诗平仄', gate: 0.02, up: '静默' },
+      { name: '微积分规则', gate: 0.03, up: '静默' },
+      { name: '法语实体', gate: 0.81, up: '激活' }
+    ],
+    swigluOut: '通过 <code>W_down</code> 从参数知识库提取并注入强特征：<strong>「巴黎 (Paris)」</strong>',
+    moeWeights: [0.02, 0.56, 0.03, 0.04, 0.31, 0.01, 0.02, 0.01], // Top2: E2 百科地理, E5 实体翻译
+    moeSummary: 'Router 仅唤醒 <strong>专家 #2 (世界百科)</strong> 与 <strong>专家 #5 (实体知识)</strong>，其余 6 个专家休眠（省去 75% 计算量）！'
+  },
+  code: {
+    label: '“def quick_sort(arr):”',
+    neurons: [
+      { name: '欧洲地理', gate: 0.02, up: '静默' },
+      { name: '首都映射', gate: 0.01, up: '静默' },
+      { name: 'Python语法', gate: 0.98, up: '激活' },
+      { name: '唐诗平仄', gate: 0.01, up: '静默' },
+      { name: '分治算法', gate: 0.91, up: '激活' },
+      { name: '缩进结构', gate: 0.86, up: '激活' }
+    ],
+    swigluOut: '通过 <code>W_down</code> 合成代码续写特征：<strong>「基准边界条件 + 递归分区」</strong>',
+    moeWeights: [0.61, 0.01, 0.02, 0.29, 0.02, 0.03, 0.01, 0.01], // Top2: E1 代码工程, E4 逻辑算法
+    moeSummary: 'Router 精准路由至 <strong>专家 #1 (代码工程)</strong> 与 <strong>专家 #4 (逻辑算法)</strong>，文学与百科专家全部跳过！'
+  },
+  poem: {
+    label: '“床前明月光，疑是___”',
+    neurons: [
+      { name: '欧洲地理', gate: 0.03, up: '静默' },
+      { name: '古典诗词', gate: 0.97, up: '激活' },
+      { name: 'Python语法', gate: 0.01, up: '静默' },
+      { name: '五言押韵', gate: 0.94, up: '激活' },
+      { name: '微积分规则', gate: 0.01, up: '静默' },
+      { name: '李白语料', gate: 0.89, up: '激活' }
+    ],
+    swigluOut: '通过 <code>W_down</code> 调取古诗记忆特征：<strong>「地上霜」</strong>',
+    moeWeights: [0.01, 0.04, 0.64, 0.02, 0.02, 0.01, 0.24, 0.02], // Top2: E3 中文文学, E7 风格修辞
+    moeSummary: 'Router 精准唤醒 <strong>专家 #3 (中文古文)</strong> 与 <strong>专家 #7 (风格修辞)</strong>，高效完成古诗补全！'
+  },
+  math: {
+    label: '“求 ∫ x²·eˣ dx =”',
+    neurons: [
+      { name: '欧洲地理', gate: 0.01, up: '静默' },
+      { name: '分部积分', gate: 0.95, up: '激活' },
+      { name: 'Python语法', gate: 0.08, up: '微弱' },
+      { name: '唐诗平仄', gate: 0.01, up: '静默' },
+      { name: '指数求导', gate: 0.93, up: '激活' },
+      { name: '符号化简', gate: 0.85, up: '激活' }
+    ],
+    swigluOut: '通过 <code>W_down</code> 触发符号推导特征：<strong>「(x² - 2x + 2)eˣ + C」</strong>',
+    moeWeights: [0.04, 0.01, 0.01, 0.34, 0.01, 0.57, 0.01, 0.01], // Top2: E6 数学符号, E4 逻辑算法
+    moeSummary: 'Router 仅唤醒 <strong>专家 #6 (高阶数学)</strong> 与 <strong>专家 #4 (逻辑算法)</strong>，单 Token 仅消耗 25% 参数算力！'
+  }
+};
+
+const MOE_EXPERTS = [
+  '专家 #1 · 代码工程', '专家 #2 · 世界百科', '专家 #3 · 中文古文', '专家 #4 · 逻辑算法',
+  '专家 #5 · 实体翻译', '专家 #6 · 高阶数学', '专家 #7 · 风格修辞', '专家 #8 · 通用对话'
+];
+
+let ffnArch = 'swiglu';
+let ffnCtx = 'paris';
+
+function renderFfnLab() {
+  const data = FFN_DATA[ffnCtx];
+  const body = document.getElementById('ffnLabBody');
+
+  if (ffnArch === 'swiglu') {
+    body.innerHTML = `
+      <div class="card-sub">
+        <div class="flex-between">
+          <div style="font-size:13.5px;font-weight:700;">
+            SwiGLU 门控阀门状态：<code>SiLU(u·W_gate) ⊙ (u·W_up)</code>（升维空间神经元动态开关）
+          </div>
+          <span class="tag tag-violet">100% 参数激活（稠密）</span>
+        </div>
+        <div class="gate-neuron-grid">
+          ${data.neurons.map(n => {
+            const isOpen = n.gate >= 0.5;
+            const pct = Math.round(n.gate * 100);
+            return `
+              <div class="neuron-card ${isOpen ? 'open' : ''}">
+                <div style="font-size:12px;font-weight:700;color:${isOpen ? '#ede9fe' : '#64748b'};">${n.name}</div>
+                <div class="neuron-bar-wrap">
+                  <div class="neuron-bar-fill" style="height:${pct}%;background:${isOpen ? 'linear-gradient(0deg,#7c3aed,#c084fc)' : '#334155'};"></div>
+                </div>
+                <div style="font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:${isOpen ? 'var(--violet)' : '#64748b'};">
+                  阀门 ${n.gate.toFixed(2)}
+                </div>
+                <div style="font-size:10.5px;color:${isOpen ? 'var(--emerald)' : '#475569'};">${isOpen ? '放行知识 ✓' : '关闭屏蔽'}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        <div class="callout-emerald">${data.swigluOut}</div>
+      </div>
+    `;
+  } else {
+    // Pick Top-2 indices
+    const sorted = data.moeWeights.map((w, i) => ({ w, i })).sort((a, b) => b.w - a.w);
+    const topSet = new Set([sorted[0].i, sorted[1].i]);
+    const topSum = sorted[0].w + sorted[1].w;
+
+    body.innerHTML = `
+      <div class="card-sub">
+        <div class="flex-between">
+          <div style="font-size:13.5px;font-weight:700;">
+            MoE 稀疏路由器（8 选 2 Top-K 激活）：每个专家本身都是一个独立 SwiGLU FFN
+          </div>
+          <span class="tag tag-emerald">仅激活 2 / 8 专家（省 75% 计算）</span>
+        </div>
+        <div class="moe-grid">
+          ${MOE_EXPERTS.map((name, idx) => {
+            const fired = topSet.has(idx);
+            const rawW = data.moeWeights[idx];
+            const normW = fired ? Math.round((rawW / topSum) * 100) : 0;
+            return `
+              <div class="expert-card ${fired ? 'fired' : 'sleeping'}">
+                <div style="font-size:12.5px;font-weight:700;color:${fired ? '#fff' : '#94a3b8'};">${name}</div>
+                <div style="font-family:var(--font-mono);font-size:11px;margin:6px 0;color:${fired ? 'var(--emerald)' : '#64748b'};">
+                  路由分: ${(rawW * 100).toFixed(0)}%
+                </div>
+                <div style="font-size:11.5px;font-weight:700;color:${fired ? '#fef3c7' : '#475569'};">
+                  ${fired ? `⚡ 唤醒（加权 ${normW}%）` : '💤 休眠（0 FLOPs）'}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        <div class="callout-emerald">${data.moeSummary}</div>
+      </div>
+    `;
+  }
+}
+
+document.querySelectorAll('#ffnArchToggle .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#ffnArchToggle .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    ffnArch = btn.dataset.arch;
+    renderFfnLab();
+  });
+});
+
+document.querySelectorAll('#contextPicker .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#contextPicker .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    ffnCtx = btn.dataset.ctx;
+    renderFfnLab();
+  });
+});
+renderFfnLab();
+
+/* =========================================================
+   LAB 4: LIVE TEMPERATURE + SAMPLING PLAYGROUND
+   ========================================================= */
+const SCENARIOS = {
+  open: {
+    prompt: '今天天气真',
+    tokens: [
+      { word: '不错', id: 4829, logit: 4.3 },
+      { word: '好',   id: 1092, logit: 3.9 },
+      { word: '晴朗', id: 8314, logit: 3.2 },
+      { word: '舒服', id: 6205, logit: 2.5 },
+      { word: '凉爽', id: 9173, logit: 1.9 },
+      { word: '热',   id: 2341, logit: 1.1 },
+      { word: '奇怪', id: 7740, logit: 0.2 },
+      { word: '拖拉机', id: 59120, logit: -2.4 }
+    ]
+  },
+  fact: {
+    prompt: '中国的首都是',
+    tokens: [
+      { word: '北京', id: 2104, logit: 8.6 },
+      { word: '北平', id: 19402, logit: 3.1 },
+      { word: '上海', id: 3308, logit: 1.4 },
+      { word: '南京', id: 5519, logit: 0.8 },
+      { word: '长安', id: 14203, logit: 0.3 },
+      { word: '东京', id: 6180, logit: -0.6 },
+      { word: '苹果', id: 12055, logit: -2.9 },
+      { word: '拖拉机', id: 59120, logit: -4.1 }
+    ]
+  }
+};
+
+let curScenario = 'open';
+let curSampler = 'topp';
+let curTemp = 0.80;
+let curParam = 0.90;
+let lastWinnerIdx = -1;
+
+const tempSlider = document.getElementById('tempSlider');
+const paramSlider = document.getElementById('paramSlider');
+
+function configureParamSlider() {
+  const box = document.getElementById('paramSliderBox');
+  const label = document.getElementById('paramLabel');
+  const hint = document.getElementById('paramHint');
+
+  if (curSampler === 'greedy') {
+    box.style.opacity = '0.45';
+    paramSlider.disabled = true;
+    label.textContent = 'Greedy 贪心解码（无额外阈值）';
+    document.getElementById('paramReadout').textContent = 'argmax';
+    hint.textContent = '永远只锁定第 1 名候选词，与 Temperature 大小无关。';
+  } else if (curSampler === 'topk') {
+    box.style.opacity = '1';
+    paramSlider.disabled = false;
+    paramSlider.min = 1; paramSlider.max = 8; paramSlider.step = 1;
+    curParam = Math.min(8, Math.max(1, Math.round(curParam >= 1 ? curParam : 4)));
+    paramSlider.value = curParam;
+    label.textContent = 'Top-K 固定保留词数 K';
+    document.getElementById('paramReadout').textContent = `K = ${curParam}`;
+    hint.textContent = '写死只保留前 K 名，其余长尾词直接清零。试试切到“场景 B”看固定 K 的缺陷！';
+  } else if (curSampler === 'topp') {
+    box.style.opacity = '1';
+    paramSlider.disabled = false;
+    paramSlider.min = 0.10; paramSlider.max = 1.00; paramSlider.step = 0.05;
+    curParam = (curParam > 1 || curParam < 0.1) ? 0.90 : curParam;
+    paramSlider.value = curParam;
+    label.textContent = 'Top-P 核采样累计概率阈值 P';
+    document.getElementById('paramReadout').textContent = `P = ${curParam.toFixed(2)}`;
+    hint.textContent = '按概率从大到小累加至刚超过 P 即截断：场景笃定时池子自动收缩，开放时自动放宽！';
+  } else if (curSampler === 'minp') {
+    box.style.opacity = '1';
+    paramSlider.disabled = false;
+    paramSlider.min = 0.02; paramSlider.max = 0.50; paramSlider.step = 0.02;
+    curParam = (curParam > 0.5 || curParam < 0.02) ? 0.10 : curParam;
+    paramSlider.value = curParam;
+    label.textContent = 'Min-P 相对最高概率的下限比例';
+    document.getElementById('paramReadout').textContent = `min_p = ${curParam.toFixed(2)}`;
+    hint.textContent = '仅保留概率 ≥ (min_p × 最高词概率) 的词：即使把温度 T 调很高也能精准砍掉胡言乱语！';
+  }
+}
+
+function computeSamplingDistribution() {
+  const tokens = SCENARIOS[curScenario].tokens;
+  // Numerically stable softmax(z / T)
+  const scaled = tokens.map(t => t.logit / curTemp);
+  const maxS = Math.max(...scaled);
+  const exps = scaled.map(s => Math.exp(s - maxS));
+  const sumExp = exps.reduce((a, b) => a + b, 0);
+  const baseProbs = exps.map(e => e / sumExp);
+
+  // Determine kept mask (tokens are already sorted by logit descending)
+  const kept = new Array(tokens.length).fill(false);
+  if (curSampler === 'greedy') {
+    kept[0] = true;
+  } else if (curSampler === 'topk') {
+    for (let i = 0; i < Math.min(tokens.length, curParam); i++) kept[i] = true;
+  } else if (curSampler === 'topp') {
+    let cum = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      kept[i] = true;
+      cum += baseProbs[i];
+      if (cum >= curParam) break;
+    }
+  } else if (curSampler === 'minp') {
+    const threshold = curParam * baseProbs[0];
+    for (let i = 0; i < tokens.length; i++) {
+      if (baseProbs[i] >= threshold || i === 0) kept[i] = true;
+    }
+  }
+
+  const keptSum = baseProbs.reduce((acc, p, i) => acc + (kept[i] ? p : 0), 0);
+  const finalProbs = baseProbs.map((p, i) => kept[i] ? (p / keptSum) : 0);
+
+  return { tokens, baseProbs, kept, finalProbs };
+}
+
+function renderSamplingLab(clearWinner = false) {
+  if (clearWinner) lastWinnerIdx = -1;
+  const { tokens, baseProbs, kept, finalProbs } = computeSamplingDistribution();
+  const keptCount = kept.filter(Boolean).length;
+
+  document.getElementById('tempReadout').textContent = `T = ${curTemp.toFixed(2)}`;
+  if (curSampler === 'topk') document.getElementById('paramReadout').textContent = `K = ${curParam}`;
+  if (curSampler === 'topp') document.getElementById('paramReadout').textContent = `P = ${curParam.toFixed(2)}`;
+  if (curSampler === 'minp') document.getElementById('paramReadout').textContent = `min_p = ${curParam.toFixed(2)}`;
+
+  const chart = document.getElementById('probChart');
+  chart.innerHTML = tokens.map((t, i) => {
+    const isKept = kept[i];
+    const isWin = i === lastWinnerIdx;
+    const rawPct = (baseProbs[i] * 100).toFixed(1);
+    const finPct = (finalProbs[i] * 100).toFixed(1);
+    const barW = Math.max(0.8, baseProbs[i] * 100);
+    const fillBg = isWin
+      ? 'linear-gradient(90deg, #10b981, #34d399)'
+      : (isKept ? 'linear-gradient(90deg, #0284c7, #38bdf8)' : '#475569');
+
+    return `
+      <div class="prob-row ${isWin ? 'winner' : (isKept ? 'kept' : 'pruned')}">
+        <div class="prob-word" style="color:${isWin ? '#d1fae5' : (isKept ? '#fff' : '#64748b')};${isKept ? '' : 'text-decoration:line-through;'}">
+          「${t.word}」
+        </div>
+        <div class="prob-logit">z=${t.logit.toFixed(1)}</div>
+        <div class="prob-track">
+          <div class="prob-fill" style="width:${barW}%;background:${fillBg};"></div>
+        </div>
+        <div class="prob-stats">
+          ${isKept
+            ? `<span style="color:${isWin ? 'var(--emerald)' : 'var(--cyan)'};font-weight:700;">抽签 ${finPct}%</span> <span style="color:var(--text-dim);">(${rawPct}%)</span>`
+            : `<span style="color:var(--rose);">已截断</span> <span style="color:var(--text-dim);">(${rawPct}%)</span>`
+          }
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const outBox = document.getElementById('sampleOutputBox');
+  const promptStr = SCENARIOS[curScenario].prompt;
+  if (lastWinnerIdx === -1) {
+    outBox.innerHTML = `
+      <div>
+        当前候选池保留了 <strong style="color:var(--cyan);">${keptCount} / ${tokens.length}</strong> 个词（已重归一化至总和 100%）。
+        点击上方 <strong>“🎲 抽签采样 1 个词”</strong> 体验最终吐字与回流闭环！
+      </div>
+      <span class="tag tag-cyan">前缀：「${promptStr}…」</span>
+    `;
+  } else {
+    const win = tokens[lastWinnerIdx];
+    outBox.innerHTML = `
+      <div>
+        ✅ 采样拍板选中：<strong style="color:var(--emerald);font-size:16px;">「${win.word}」</strong>
+        <code style="margin-left:6px;color:#bae6fd;">Token ID = ${win.id}</code>
+        → 完整文本更新为：<strong>「${promptStr}${win.word}」</strong>
+      </div>
+      <span class="tag tag-emerald">非 &lt;EOS&gt; → 立刻回流第 1 层 Embedding！</span>
+    `;
+  }
+
+  // Contextual educational insight
+  const insight = document.getElementById('samplerInsight');
+  if (curSampler === 'topp') {
+    insight.innerHTML = curScenario === 'fact'
+      ? `<strong>Top-P 自适应威力显现：</strong>在“中国的首都是___”这种笃定场景下，第 1 名「北京」自己就占了极大概率，Top-P 自动把候选池收缩到 <strong>${keptCount} 个词</strong>，彻底杜绝乱编！`
+      : `<strong>Top-P 自适应威力显现：</strong>在“今天天气真___”这种开放场景下，Top-P 自动放宽候选池至 <strong>${keptCount} 个合理词</strong>，同时把底部的离谱词「拖拉机」挡在门外！`;
+  } else if (curSampler === 'minp') {
+    const cutoffPct = (curParam * baseProbs[0] * 100).toFixed(1);
+    insight.innerHTML = `<strong>Min-P 动态下限：</strong>当前最高词概率为 ${(baseProbs[0]*100).toFixed(1)}%，因此淘汰线自动设为 <code>${curParam.toFixed(2)} × ${(baseProbs[0]*100).toFixed(1)}% = ${cutoffPct}%</code>。你可以试着把 Temperature 拉高到 1.6，看看它如何依然稳稳挡住低概率噪声词！`;
+  } else if (curSampler === 'topk') {
+    insight.innerHTML = curScenario === 'fact' && curParam >= 4
+      ? `<strong>看到 Top-K 的固有缺陷了吗？</strong>即使模型对「北京」极度笃定，固定 <code>K=${curParam}</code> 仍然强行把「上海 / 南京」等错误词放进了候选池（尤其当温度 T 偏高时极易抽错）！`
+      : `<strong>Top-K 原理：</strong>无论当前句子是开放还是唯一答案，都机械保留前 ${curParam} 个词，缺少根据置信度自适应伸缩池子的能力。`;
+  } else {
+    insight.innerHTML = `<strong>Greedy 贪心解码：</strong>永远锁定第 1 名「${tokens[0].word}」，输出 100% 确定可复现（适合数学/代码验证），但在长文创作中容易显得刻板或陷入重复循环。`;
+  }
+}
+
+document.querySelectorAll('#scenarioToggle .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#scenarioToggle .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    curScenario = btn.dataset.sc;
+    renderSamplingLab(true);
+  });
+});
+
+document.querySelectorAll('#samplerTabs .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#samplerTabs .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    curSampler = btn.dataset.sp;
+    configureParamSlider();
+    renderSamplingLab(true);
+  });
+});
+
+tempSlider.addEventListener('input', e => {
+  curTemp = parseFloat(e.target.value);
+  renderSamplingLab(true);
+});
+
+paramSlider.addEventListener('input', e => {
+  curParam = curSampler === 'topk' ? parseInt(e.target.value, 10) : parseFloat(e.target.value);
+  renderSamplingLab(true);
+});
+
+document.getElementById('btnSampleDraw').addEventListener('click', () => {
+  const { finalProbs } = computeSamplingDistribution();
+  let r = Math.random(), acc = 0, chosen = 0;
+  for (let i = 0; i < finalProbs.length; i++) {
+    acc += finalProbs[i];
+    if (r <= acc) { chosen = i; break; }
+  }
+  lastWinnerIdx = chosen;
+  renderSamplingLab(false);
+});
+
+configureParamSlider();
+renderSamplingLab(true);
+</script>
+</body>
+</html>

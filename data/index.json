@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-26T06:50:03Z",
+  "generatedAt": "2026-11-26T06:55:58Z",
   "totalCount": 2,
   "categories": [
     {
@@ -10,15 +10,15 @@
   ],
   "tags": [
     {
+      "name": "大模型",
+      "count": 2
+    },
+    {
       "name": "KV Cache",
       "count": 2
     },
     {
       "name": "LLM",
-      "count": 2
-    },
-    {
-      "name": "大模型",
       "count": 2
     },
     {
@@ -67,15 +67,20 @@
         "KV Cache 为何不含 Q 与 O？算完 o 之后，大模型如何一步步吐出下一个字",
         "为什么 KV Cache 只存 K 和 V？（既不含 Q，也不含 O）",
         "每层算完 Attention 输出 o 之后：Block 后半段的 5 步拆解",
-        "最后一层（Layer N）专属 4 步：从隐藏向量变成 1 个具体文字"
+        "最后一层（Layer N）专属 4 步：从隐藏向量变成 1 个具体文字",
+        "端到端闭环总结：一个 Token 完整的一生",
+        "只缓存成品 K 与 V",
+        "每层 5 步精加工",
+        "顶层比对 15 万词典",
+        "采样吐字并回流"
       ],
-      "content": "LLM 推理全链路交互图解（下篇） 01 为何只有 KV（无 Q 无 O） 02 算完 o 之后的 5 步 03 最后一层吐字与采样 04 端到端闭环总结 交互式可视化教学指南 · 下篇：从 KV Cache 到吐出下一个字 KV Cache 为何不含 Q 与 O？ 算完 o 之后，大模型如何一步步吐出下一个字 彻底厘清 KV Cache 显存里真正存了什么、为什么历史 O 不重算也不缓存，再逐层解剖从 Attention 输出 o 经过 W_O、RMSNorm、SwiGLU/MoE、LM Head 到 Top-P / Min-P 采样的完整生命史。 只存 K, V（零 Q 零 O） W_O 跨头融合 SwiGLU 门控 / MoE 路由 LM Head 词表点积 Temperature / Top-P / Min-P 01 为什么 KV Cache 只存 K 和 V？（既不含 Q，也不含 O） 核心铁律：“历史结果不变、不用重算” ≠ “后续需要缓存复用”。在第 t 步 Decode 阶段，只有当前新词的 q_t 沿着垂直单通道向上爬升，每层只需横向读取存好的历史 K, V；所有历史 Q 和历史 O 根本没有出现在公式里，用完当场销毁！ 交互实验 1：第 t 步注意力矩阵透视器 切换有无 KV Cache 直观对比全量傻算（算出 t 行却扔掉前 t-1 行）与开启 KV Cache 后（只用 1 行 q_t 直出 o_t）的算力天壤之别。 开启 KV Cache（单行直出 o_t） 无 KV Cache（全量傻算浪费） 交互实验 2：多层直通道推演——历史 O 到底去哪儿了？ 点击步进观察 观察为什么第 2 层不需要第 1 层的历史 o_1..o_{t-1}：因为每一层都各自把“成品 K、V”存进了本层缓存！ 推进一步 (+1 Token) 重置到第 1 词 历史矩阵 Q / K / V / O 的最终命运 历史矩阵 新词来后变不变？ 第 t 步还要读吗？ 最终处理 历史 K, V 不变 要读！ 永久缓存复用 历史 Q 不变 不读 不重算、不缓存 历史 O 不变 不读 不重算、不缓存 灵魂追问：为何不反过来“存上一层的 O，省掉下一层的 K、V”？ 既然第 2 层的 K、V 是由第 1 层的 O 算出来的，反过来存 O 不行吗？答案是算力和显存双重血亏： ① 算力血亏：如果只存历史 O，每生成一个新词，都得把历史上万个词的 O 重新跑一遍庞大的 FFN + W_K / W_V 矩阵乘才能还原出 K、V！ ② 显存也亏：现代大模型采用 GQA / DeepSeek MLA 压缩技术，每层存 K、V 的体积往往只有存全维度隐藏状态 O 的 1/4 ~ 1/16！ 02 每层算完 Attention 输出 o 之后：Block 后半段的 5 步拆解 注意：不仅第 1 ~ N-1 个中间层要走这 5 步，最后一层（第 N 层）同样必须先走完这 5 步，把 FFN/MoE 的非线性加工全部做完，才会离开堆叠区去预测下一个词。点击下方任意步骤查看公式与原理。 STEP 1 W_O 线性融合 Concat(heads) · W_O STEP 2 第一次残差相加 h' = x_in + AttnOut STEP 3 RMSNorm 校准 u = RMSNorm(h') STEP 4 FFN / MoE 加工 d → 4d → d (非线性) STEP 5 第二次残差相加 x_out = h' + FFNOut 交互实验 3：深入 Step 4 核心——SwiGLU 门控 vs. MoE 稀疏专家路由 点击切换架构与输入语境 Attention 只做线性加权平均；真正的非线性推理、事实记忆提取与超大参数扩容，全靠这一步的 FFN / MoE！ 稠密模型：SwiGLU 门控 万亿旗舰：MoE 混合专家 选择当前处理的 Token 语境： “法国的首都是___” “def quick_sort(arr):” “床前明月光，疑是___” “求 ∫ x²·eˣ dx =” 03 最后一层（Layer N）专属 4 步：从隐藏向量变成 1 个具体文字 当最后一层走完 Step 5 得到终极隐藏状态 h_final ∈ ℝ^(1×d) 后，模型不再向上传给下一层，而是通过 Final RMSNorm → LM Head 词表投影 → Temperature + Softmax → 解码采样 四步拍板吐出一个词。 STEP 6 最终归一化（Final RMSNorm） ĥ = RMSNorm_final( h_final ) 因为在现代 Pre-Norm 架构中，残差主干道从第 1 层一路做纯加法叠到第 80~120 层（x₀ + Δ₁ + Δ₂ + … + Δ₂ₙ），向量模长早已累积膨胀。在乘以庞大的词表矩阵前，必须用最后一次 RMSNorm 把尺度校准归位，否则 Logits 打分会严重漂移。 STEP 7 词表线性投影（LM Head / Unembedding） z = ĥ · W_lm_head ∈ ℝ^(1 × V) (V ≈ 150,000 词表) 几何本质：W_lm_head 的每一列都对应词典里一个词的“语义原型”。矩阵乘法就是在把“模型大脑此刻想表达的意思 ĥ”与字典里 15 万个词逐一做点积比对相似度——越吻合的词，原始得分（Logits z）越高！ STEP 8 & 9 交互实验室 温度缩放（Temperature）、Softmax 与 4 种采样算法实时模拟 拖动 Temperature 和采样阈值，观察候选词概率如何变形与被动态截断，再点击“抽签吐字”看它回流第 1 层！",
-      "wordCount": 1285,
-      "readingTime": 4,
-      "sizeBytes": 30941,
+      "content": "LLM 推理全链路交互图解（下篇） 01 为何只有 KV（无 Q 无 O） 02 算完 o 之后的 5 步 03 最后一层吐字与采样 04 端到端闭环总结 交互式可视化教学指南 · 下篇：从 KV Cache 到吐出下一个字 KV Cache 为何不含 Q 与 O？ 算完 o 之后，大模型如何一步步吐出下一个字 彻底厘清 KV Cache 显存里真正存了什么、为什么历史 O 不重算也不缓存，再逐层解剖从 Attention 输出 o 经过 W_O、RMSNorm、SwiGLU/MoE、LM Head 到 Top-P / Min-P 采样的完整生命史。 只存 K, V（零 Q 零 O） W_O 跨头融合 SwiGLU 门控 / MoE 路由 LM Head 词表点积 Temperature / Top-P / Min-P 01 为什么 KV Cache 只存 K 和 V？（既不含 Q，也不含 O） 核心铁律：“历史结果不变、不用重算” ≠ “后续需要缓存复用”。在第 t 步 Decode 阶段，只有当前新词的 q_t 沿着垂直单通道向上爬升，每层只需横向读取存好的历史 K, V；所有历史 Q 和历史 O 根本没有出现在公式里，用完当场销毁！ 交互实验 1：第 t 步注意力矩阵透视器 切换有无 KV Cache 直观对比全量傻算（算出 t 行却扔掉前 t-1 行）与开启 KV Cache 后（只用 1 行 q_t 直出 o_t）的算力天壤之别。 开启 KV Cache（单行直出 o_t） 无 KV Cache（全量傻算浪费） 交互实验 2：多层直通道推演——历史 O 到底去哪儿了？ 点击步进观察 观察为什么第 2 层不需要第 1 层的历史 o_1..o_{t-1}：因为每一层都各自把“成品 K、V”存进了本层缓存！ 推进一步 (+1 Token) 重置到第 1 词 历史矩阵 Q / K / V / O 的最终命运 历史矩阵 新词来后变不变？ 第 t 步还要读吗？ 最终处理 历史 K, V 不变 要读！ 永久缓存复用 历史 Q 不变 不读 不重算、不缓存 历史 O 不变 不读 不重算、不缓存 灵魂追问：为何不反过来“存上一层的 O，省掉下一层的 K、V”？ 既然第 2 层的 K、V 是由第 1 层的 O 算出来的，反过来存 O 不行吗？答案是算力和显存双重血亏： ① 算力血亏：如果只存历史 O，每生成一个新词，都得把历史上万个词的 O 重新跑一遍庞大的 FFN + W_K / W_V 矩阵乘才能还原出 K、V！ ② 显存也亏：现代大模型采用 GQA / DeepSeek MLA 压缩技术，每层存 K、V 的体积往往只有存全维度隐藏状态 O 的 1/4 ~ 1/16！ 02 每层算完 Attention 输出 o 之后：Block 后半段的 5 步拆解 注意：不仅第 1 ~ N-1 个中间层要走这 5 步，最后一层（第 N 层）同样必须先走完这 5 步，把 FFN/MoE 的非线性加工全部做完，才会离开堆叠区去预测下一个词。点击下方任意步骤查看公式与原理。 STEP 1 W_O 线性融合 Concat(heads) · W_O STEP 2 第一次残差相加 h' = x_in + AttnOut STEP 3 RMSNorm 校准 u = RMSNorm(h') STEP 4 FFN / MoE 加工 d → 4d → d (非线性) STEP 5 第二次残差相加 x_out = h' + FFNOut 交互实验 3：深入 Step 4 核心——SwiGLU 门控 vs. MoE 稀疏专家路由 点击切换架构与输入语境 Attention 只做线性加权平均；真正的非线性推理、事实记忆提取与超大参数扩容，全靠这一步的 FFN / MoE！ 稠密模型：SwiGLU 门控 万亿旗舰：MoE 混合专家 选择当前处理的 Token 语境： “法国的首都是___” “def quick_sort(arr):” “床前明月光，疑是___” “求 ∫ x²·eˣ dx =” 03 最后一层（Layer N）专属 4 步：从隐藏向量变成 1 个具体文字 当最后一层走完 Step 5 得到终极隐藏状态 h_final ∈ ℝ^(1×d) 后，模型不再向上传给下一层，而是通过 Final RMSNorm → LM Head 词表投影 → Temperature + Softmax → 解码采样 四步拍板吐出一个词。 STEP 6 最终归一化（Final RMSNorm） ĥ = RMSNorm_final( h_final ) 因为在现代 Pre-Norm 架构中，残差主干道从第 1 层一路做纯加法叠到第 80~120 层（x₀ + Δ₁ + Δ₂ + … + Δ₂ₙ），向量模长早已累积膨胀。在乘以庞大的词表矩阵前，必须用最后一次 RMSNorm 把尺度校准归位，否则 Logits 打分会严重漂移。 STEP 7 词表线性投影（LM Head / Unembedding） z = ĥ · W_lm_head ∈ ℝ^(1 × V) (V ≈ 150,000 词表) 几何本质：W_lm_head 的每一列都对应词典里一个词的“语义原型”。矩阵乘法就是在把“模型大脑此刻想表达的意思 ĥ”与字典里 15 万个词逐一做点积比对相似度——越吻合的词，原始得分（Logits z）越高！ STEP 8 & 9 交互实验室 温度缩放（Temperature）、Softmax 与 4 种采样算法实时模拟 拖动 Temperature 和采样阈值，观察候选词概率如何变形与被动态截断，再点击“抽签吐字”看它回流第 1 层！ 场景 A：开放续写（今天天气真___） 场景 B：高确定事实（中国的首都是___） Greedy 贪心 Top-K 采样 Top-P 核采样（最常用） Min-P 动态下限 🎲 抽签采样 1 个词（吐字！） Temperature 温度 T（控制分布尖锐/发散度） T = 0.80 T 越小越严谨确定（趋近贪心）；T 越大分布越扁平（更有创意但易胡说） Top-P 累计概率截断阈值 P = 0.90 04 端到端闭环总结：一个 Token 完整的一生 把整个推理过程串成四句话，你就彻底打通了大模型从底层张量到屏幕打字机的全部任督二脉。 01 只缓存成品 K 与 V 每层各自存下历史 Token 的 K 和 V；历史 Q 和历史 O 永远不会再被读取，算完当前步就释放，绝不占持续显存。 02 每层 5 步精加工 Attention 吐出 o 后，经 W_O 跨头混合 → 残差 → RMSNorm → SwiGLU/MoE 调取记忆与非线性推理 → 残差，传给下一层。 03 顶层比对 15 万词典 第 N 层走完 FFN 后，经 Final RMSNorm 校准，用 LM Head 与词表原型做点积算出 Logits，再按温度 T 转成概率。 04 采样吐字并回流 Top-P / Min-P 自适应砍掉长尾噪声词后抽签选出 1 个 Token ID；若非 <EOS>，立刻丢回第 1 层 Embedding 开启下一轮！ 单文件离线交互式图解（下篇） · 涵盖 KV Cache 本质 / Transformer Block 后半段 / SwiGLU & MoE / LM Head & Decoding Sampling",
+      "wordCount": 1661,
+      "readingTime": 5,
+      "sizeBytes": 73233,
       "createdAt": "2026-11-26T06:50:03Z",
-      "updatedAt": "2026-11-26T06:50:07Z",
-      "contentHash": "3353c34d64e5"
+      "updatedAt": "2026-11-26T06:55:57Z",
+      "contentHash": "4f50bdbb6e6b"
     },
     {
       "id": "ai_studio_code",
