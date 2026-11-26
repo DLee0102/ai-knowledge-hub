@@ -1,28 +1,48 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-26T07:34:12Z",
-  "totalCount": 3,
+  "generatedAt": "2026-11-26T09:21:43Z",
+  "totalCount": 4,
   "categories": [
     {
       "name": "核心架构",
-      "count": 3
+      "count": 4
     }
   ],
   "tags": [
     {
+      "name": "大模型",
+      "count": 3
+    },
+    {
       "name": "KV Cache",
       "count": 3
+    },
+    {
+      "name": "GQA",
+      "count": 2
     },
     {
       "name": "LLM",
       "count": 2
     },
     {
-      "name": "Transformer",
+      "name": "MLA",
       "count": 2
     },
     {
-      "name": "大模型",
+      "name": "MoE",
+      "count": 2
+    },
+    {
+      "name": "RoPE",
+      "count": 2
+    },
+    {
+      "name": "SwiGLU",
+      "count": 2
+    },
+    {
+      "name": "Transformer",
       "count": 2
     },
     {
@@ -34,35 +54,50 @@
       "count": 1
     },
     {
-      "name": "GQA",
-      "count": 1
-    },
-    {
-      "name": "MLA",
-      "count": 1
-    },
-    {
-      "name": "MoE",
-      "count": 1
-    },
-    {
       "name": "RMSNorm",
-      "count": 1
-    },
-    {
-      "name": "RoPE",
       "count": 1
     },
     {
       "name": "Self-Attention",
       "count": 1
-    },
-    {
-      "name": "SwiGLU",
-      "count": 1
     }
   ],
   "articles": [
+    {
+      "id": "llm_ffn_moe_params",
+      "slug": "llm_ffn_moe_params",
+      "filename": "llm_ffn_moe_params.html",
+      "path": "articles/llm_ffn_moe_params.html",
+      "title": "深入图解 FFN、MoE 架构与大模型参数规模推导",
+      "category": "核心架构",
+      "tags": [
+        "大模型",
+        "MoE",
+        "SwiGLU",
+        "GQA",
+        "MLA",
+        "RoPE"
+      ],
+      "summary": "如果说 Attention 是词与词的“会议室”，那么占满全模型 70%~98% 参数的 FFN / MoE 才是大模型真正的“思考大脑与知识仓库”。下文带你吃透 SwiGLU、细粒度 MoE、负载均衡，并亲手用交互计算器精确推导出 Llama 3 8B（8,030,261,248）乃至万亿 MoE 的参数规模！",
+      "headings": [
+        "大模型的“知识仓库”与万亿密码：FFN、MoE 架构与参数规模推导全解",
+        "FFN（前馈神经网络）：大模型的非线性大脑与知识仓库",
+        "MoE（混合专家架构）：解耦“总参数”与“单步算力”的万亿密码",
+        "细粒度专家拆分",
+        "共享专家隔离",
+        "无辅助损失均衡",
+        "EP 并行与路由重放",
+        "模型规模与层数（L）、宽度（d）的缩放规律",
+        "交互式大模型参数规模 & 显存精确推导计算器"
+      ],
+      "content": "FFN、MoE 与参数规模推导交互图解 01 FFN 前馈网络 02 MoE 混合专家 03 层数/宽度缩放律 04 参数规模手算器 正在初始化… 一次秒开加固版 · FFN / SwiGLU / MoE / 参数规模精确推导 大模型的“知识仓库”与万亿密码： FFN、MoE 架构与参数规模推导全解 如果说 Attention 是词与词的“会议室”，那么占满全模型 70%~98% 参数的 FFN / MoE 才是大模型真正的“思考大脑与知识仓库”。下文带你吃透 SwiGLU、细粒度 MoE、负载均衡，并亲手用交互计算器精确推导出 Llama 3 8B（8,030,261,248）乃至万亿 MoE 的参数规模！ ReLU → GELU → SwiGLU Key-Value 知识记忆库 细粒度 MoE + 共享专家 无辅助损失负载均衡 N ≈ 12·L·d² + 2Vd 01 FFN（前馈神经网络）：大模型的非线性大脑与知识仓库 多头自注意力本质上只做了跨 Token 的线性加权平均。没有 FFN，堆叠再多层 Attention 也近似于线性变换，无法完成复杂逻辑推导。FFN 独立作用于每个 Token，通过“先升维摊开特征 → 非线性门控筛选 → 再降维浓缩”完成深度加工，并承载了全模型约 70% 的知识参数。 交互实验 1：FFN 的三代演进结构图（2017 → 2026） 切换对比参数与门控 观察为何现代大模型（Llama / Qwen / DeepSeek / Gemma）全部淘汰了 2 矩阵的 ReLU/GELU，统一升级为 3 矩阵门控 SwiGLU。 第 1 代：ReLU FFN (2017) 第 2 代：GELU FFN (GPT-3) 第 3 代：SwiGLU 门控 (现代标配) 交互实验 2：SwiGLU“Key-Value 知识记忆库”动态透视 点击切换输入语境 机制可解释性研究（Geva et al.）发现：W_gate / W_up 像模式检测器（匹配问题 Key），SiLU 像精准阀门开关，W_down 则把对应的事实记忆（Value）注入残差流！ “法国的首都是___” “def quick_sort(arr):” “床前明月光，疑是___” “提出 E = mc² 的科学家是” 02 MoE（混合专家架构）：解耦“总参数”与“单步算力”的万亿密码 在稠密模型中，参数越大计算越贵（如 Llama 3 405B 每吐 1 个字都要把 405B 参数全算一遍）。MoE（Mixture of Experts）把单层巨大的 FFN 拆分成 E 个独立专家 + 1 个轻量路由器（Router），每个 Token 只唤醒得分最高的 Top-K 个专家，让模型同时拥有万亿级的总知识库和百亿级的极速推理开销！ 演进 ① 细粒度专家拆分 从早期 Mixtral 的 8 选 2（仅 28 种组合），演进为 DeepSeek / Qwen3 / Kimi 的 128~384 选 6~8（组合数超 10¹⁴ 种！），专家分工精细度暴涨。 演进 ② 共享专家隔离 设 1~2 个永远常驻激活的共享专家专门消化基础语法与通用常识，彻底解放路由专家去专攻数学、代码、物理、多语种，消除冗余。 演进 ③ 无辅助损失均衡 防止路由坍塌（所有词挤向 1~2 个热门专家）。DeepSeek-V3 弃用干扰主梯度的 Aux Loss，改用动态微调偏置项 bᵢ（过载减、空闲加），均衡且零掉点。 演进 ④ EP 并行与路由重放 不同专家分布在多张 GPU 上，经 All-to-All 通信分发与汇聚；在 RL 后训练阶段还需 Routing Replay 锁死训推路由一致，防止训练崩溃。 交互实验 3：现代 MoE 路由仿真 & 负载均衡实验 切换架构与均衡策略 对比“粗粒度 8 选 2”与“细粒度 16 选 4 + 共享专家”，并亲自体验“路由坍塌（过载拥堵）”与“无辅助损失动态偏置 bᵢ 校正”的震撼差异！ Mixtral 风格（8选2 粗粒度） DeepSeek 风格（16选4 + 1共享） 输入 Token 类型： Python 代码 微积分数学 古典诗词 通用虚词「的」 ✓ 动态偏置均衡 (Aux-Loss-Free) ⚠️ 模拟路由坍塌 (马太效应) 03 模型规模与层数（L）、宽度（d）的缩放规律 参数规模 N 不仅由总预算决定，更取决于把预算分配给深度（层数 L）还是宽度（维度 d），以及是否引入 MoE 专家宽度（E）。 核心数学定律：深度线性、宽度平方、扩容立方根 架构设计基石 Dense: N ≈ 12 · L · d² + (1或2) · V · d MoE: N_total ≈ L · (P_attn + E · P_exp) ｜ N_active ∝ K 深度 L 翻倍 → 参数 × 2（线性增长）；宽度 d 翻倍 → 参数 × 4（平方增长）。 经典宽高比（Aspect Ratio）d / L ≈ 80 ~ 130：若维持宽高比 r = d/L 恒定，则 N ≈ 12r²L³，推导出立方根缩放律——总参数每扩大 8 倍，理想层数 L 与宽度 d 各自同步扩大约 2 倍（如 Llama 3 从 8B→70B：L 32→80，d 4096→8192）。 小模型词表占比陷阱：0.5B~2B 小模型因词表高达 15 万，V·d 往往吃掉全模型 15%~30% 的参数！ 同等参数下：“深而瘦” vs. “浅而宽”怎么选？ 工程与智能权衡 维度 更深更瘦 (高 L / 低 d) 更浅更宽 (低 L / 高 d) 能力偏向 多步逻辑与推理更强（如 Qwen3 小/中模型刻意做深） 世界知识记忆容量大、特征不拥挤 推理速度 慢：层间严格串行 + 每层 2 次 TP 通信，延迟高 极快：宽矩阵吃满 GPU Tensor Core，吞吐高 KV Cache 随层数 L 线性翻倍膨胀 加 FFN 宽度或加 MoE 专家 0 增加 KV 显存！ 当下共识 小模型（0.6B~32B）做深抠推理；万亿旗舰稳在 60~96 层、靠 MoE 横向爆宽！ 主流开源与经典大模型“身材”全景对照表 代表模型 架构 总参数 / 激活 层数 L 宽度 d 宽高比 d/L 架构定位点评 GPT-3 125M → 175B Dense 125M → 175B 12 → 96 768 → 12288 64 → 128 确立经典 d/L = 128 黄金比例 Llama 3 8B / 70B / 405B Dense 8B / 70B / 405B 32 / 80 / 126 4096 / 8192 / 16384 128 / 102 / 130 严格踩在立方根缩放曲线上的稠密标杆 Qwen3-0.6B / 32B Dense 0.6B / 32B 28 / 64 1024 / 5120 36.6 / 80.0 典型“深而瘦”，小中尺寸狠抓复杂推理能力 DeepSeek-V3 MoE 671B / 37B 61 7168 117.5 256 路由专家 + 1 共享专家 + MLA，稳深度省算力 Kimi K2 MoE ~1T / 32B 61 7168 117.5 384 细粒度专家横向冲上万亿，深度锁定 61 层 Qwen3-235B-A22B MoE 235B / 22B 94 4096 43.6 128 专家偏深型 MoE，强化长程思维链推理 04 交互式大模型参数规模 & 显存精确推导计算器 一键加载 Llama 3 8B（精确到个位数 8,030,261,248）、Llama 3 70B、GPT-3 175B、深而瘦 1.5B、Mixtral 风格 8×8B MoE 或 DeepSeek 风格细粒度 MoE，也可以任意拖动层数、宽度、词表、GQA 与 MoE 专家数，实时查看每一步精确矩阵推导公式与显存账本！ 快速加载真实架构预设（点击一键填入全部超参）： Llama 3 8B（精确 8.03B） Llama 3 70B（精确 70.55B） GPT-3 175B（经典 MHA+2矩阵） Qwen 风格 1.5B（深而瘦/大词表） Mixtral 风格 8×8B MoE（为何≠64B?） DeepSeek 风格细粒度 MoE（256选8） 架构类型 Dense 稠密 MoE 混合专家 堆叠层数 L（深度）32 层 隐藏维度 d（宽度）4,096 1024 (端侧极小模型) 1536 (1.5B 级) 2048 (2B~3B 级) 4096 (7B~8B / Mixtral 标准) 5120 (14B~32B 级) 7168 (DeepSeek-V3 / Kimi K2) 8192 (70B 标准) 12288 (GPT-3 175B) 16384 (Llama 3 405B) 词表大小 V（Vocab Size）128,256 32,000 (早期 Llama 1/2) 50,257 (GPT-2 / GPT-3) 128,256 (Llama 3 官方) 129,280 (DeepSeek-V3) 151,936 (Qwen 2.5 / Qwen 3) 256,000 (Gemma 超大多语种) 共享词嵌入与 LM Head 权重（tie_word_embeddings = true，省一半词表参数） 注意力 GQA 压缩比（Q头 : KV头）4 : 1 MHA (1 : 1，无压缩，Attn = 4.00·d²) GQA (4 : 1，Llama 3 8B，Attn = 2.50·d²) GQA (6 : 1，Qwen 1.5B，Attn = 2.33·d²) GQA (8 : 1，Llama 3 70B，Attn = 2.25·d²) FFN 类型 & 单 FFN 中间维 d_ffn 14,336 (3.50×d) 现代 SwiGLU（3 个矩阵：gate/up/down） 传统 ReLU/GELU（2 个矩阵：W₁/W₂） ⚡ MoE 稀疏专家参数设置 每层路由专家总数 E8 个 单 Token 每次激活专家数 K (Top-K)2 个 常驻共享专家数 E_shared0 个 精确总参数量（Total Params） — — 单 Token 激活参数（Active Params） — — 权重显存估算（BF16 / INT4） — — 模型身材：宽高比 d / L — — 各模块参数占比透视 — 逐项精确数学推导过程（RoPE = 0 参数） — 单文件离线交互式图解 · 一次秒开加固架构（零 CDN / 无 svg.innerHTML / 模块异常隔离 / 全流程精确推导）",
+      "wordCount": 2127,
+      "readingTime": 6,
+      "sizeBytes": 80731,
+      "createdAt": "2026-11-26T09:21:41Z",
+      "updatedAt": "2026-11-26T09:21:42Z",
+      "contentHash": "7c370faaecce"
+    },
     {
       "id": "mha",
       "slug": "mha",
