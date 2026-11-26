@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>深入图解 LLM 推理（下）：KV Cache 本质、层内后半程与解码采样</title>
+<style>
+  :root {
+    --bg: #080c16;
+    --bg-elev: #0f1626;
+    --card: #131c31;
+    --border: rgba(148, 163, 184, 0.16);
+    --border-strong: rgba(148, 163, 184, 0.34);
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+
+    --cyan: #38bdf8;
+    --cyan-soft: rgba(56, 189, 248, 0.14);
+    --emerald: #34d399;
+    --emerald-soft: rgba(52, 211, 153, 0.14);
+    --violet: #a78bfa;
+    --violet-soft: rgba(167, 139, 250, 0.15);
+    --amber: #fbbf24;
+    --amber-soft: rgba(251, 191, 36, 0.14);
+    --rose: #fb7185;
+    --rose-soft: rgba(251, 113, 133, 0.14);
+
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-sans);
+    background:
+      radial-gradient(ellipse 80% 50% at 18% -10%, rgba(52, 211, 153, 0.11), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 85% 0%, rgba(56, 189, 248, 0.12), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Navbar */
+  .navbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    background: rgba(8, 12, 22, 0.8);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .brand-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--emerald), var(--cyan));
+    box-shadow: 0 0 12px var(--emerald);
+  }
+  .nav-links { display: flex; gap: 6px; flex-wrap: wrap; }
+  .nav-links a {
+    text-decoration: none;
+    color: var(--text-muted);
+    font-size: 13px; font-weight: 500;
+    padding: 6px 12px; border-radius: 999px;
+    transition: all 0.2s; border: 1px solid transparent;
+  }
+  .nav-links a:hover {
+    color: var(--text);
+    background: rgba(255,255,255,0.06);
+    border-color: var(--border);
+  }
+
+  /* Layout */
+  .container { max-width: 1180px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* Hero */
+  .hero { padding: 58px 0 38px; text-align: center; }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+    color: var(--emerald); background: var(--emerald-soft);
+    border: 1px solid rgba(52, 211, 153, 0.32);
+    margin-bottom: 18px;
+  }
+  .hero h1 {
+    font-size: clamp(27px, 4.2vw, 44px);
+    font-weight: 800; letter-spacing: -0.02em; line-height: 1.22;
+    margin-bottom: 14px;
+    background: linear-gradient(135deg, #ffffff 10%, #a7f3d0 50%, #7dd3fc 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .hero p { max-width: 760px; margin: 0 auto 24px; font-size: 15.5px; color: var(--text-muted); }
+  .pill-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    font-size: 12px; font-family: var(--font-mono);
+    padding: 5px 12px; border-radius: 8px;
+    background: var(--bg-elev); border: 1px solid var(--border); color: var(--text-muted);
+  }
+
+  /* Section */
+  section { margin-top: 56px; scroll-margin-top: 76px; }
+  .section-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 10px; }
+  .section-num {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+    color: var(--emerald); background: var(--emerald-soft);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    padding: 3px 10px; border-radius: 999px;
+  }
+  .section-head h2 { font-size: clamp(21px, 2.5vw, 28px); font-weight: 700; letter-spacing: -0.01em; }
+  .section-desc { color: var(--text-muted); font-size: 15px; max-width: 900px; margin-bottom: 22px; }
+
+  /* Cards & Tags */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: var(--shadow);
+  }
+  .card + .card { margin-top: 20px; }
+  .card-sub {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 18px;
+  }
+  .card-title {
+    font-size: 16px; font-weight: 700; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .tag {
+    font-size: 11px; font-family: var(--font-mono);
+    padding: 2px 8px; border-radius: 999px; font-weight: 600;
+  }
+  .tag-cyan { background: var(--cyan-soft); color: var(--cyan); border: 1px solid rgba(56,189,248,0.32); }
+  .tag-emerald { background: var(--emerald-soft); color: var(--emerald); border: 1px solid rgba(52,211,153,0.32); }
+  .tag-violet { background: var(--violet-soft); color: var(--violet); border: 1px solid rgba(167,139,250,0.32); }
+  .tag-amber { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(251,191,36,0.32); }
+  .tag-rose { background: var(--rose-soft); color: var(--rose); border: 1px solid rgba(251,113,133,0.32); }
+
+  /* Controls */
+  .btn-group {
+    display: inline-flex; background: var(--bg); padding: 4px;
+    border-radius: 10px; border: 1px solid var(--border); gap: 4px; flex-wrap: wrap;
+  }
+  .btn {
+    border: none; background: transparent; color: var(--text-muted);
+    font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+    padding: 7px 14px; border-radius: 7px; cursor: pointer; transition: all 0.2s;
+  }
+  .btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+  .btn.active {
+    background: linear-gradient(135deg, rgba(52,211,153,0.22), rgba(56,189,248,0.22));
+    color: #fff; border: 1px solid rgba(56,189,248,0.45);
+    box-shadow: 0 0 16px rgba(56,189,248,0.14);
+  }
+  .btn-action {
+    background: linear-gradient(135deg, #059669, #0284c7);
+    color: #fff; border: none; padding: 8px 16px; border-radius: 9px;
+    font-size: 13px; font-weight: 700; cursor: pointer;
+    transition: transform 0.15s, filter 0.2s;
+  }
+  .btn-action:hover { filter: brightness(1.12); transform: translateY(-1px); }
+  .btn-action:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
+  .btn-ghost {
+    background: rgba(255,255,255,0.05); color: var(--text);
+    border: 1px solid var(--border); padding: 8px 14px; border-radius: 9px;
+    font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); border-color: var(--border-strong); }
+
+  .flex-between {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 14px;
+  }
+
+  .svg-stage {
+    width: 100%; background: #070b14;
+    border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px; overflow-x: auto; margin-top: 16px;
+  }
+
+  /* Formula & Callout Boxes */
+  .formula-box {
+    background: #070b14;
+    border: 1px solid rgba(56, 189, 248, 0.26);
+    border-radius: 10px;
+    padding: 13px 16px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: #e0f2fe;
+    margin: 12px 0;
+    overflow-x: auto;
+    text-align: center;
+  }
+  .callout-emerald {
+    background: rgba(52, 211, 153, 0.08);
+    border-left: 3px solid var(--emerald);
+    border-radius: 0 10px 10px 0;
+    padding: 12px 15px;
+    font-size: 13.5px;
+    color: #d1fae5;
+    margin-top: 14px;
+  }
+  .callout-amber {
+    background: rgba(251, 191, 36, 0.08);
+    border-left: 3px solid var(--amber);
+    border-radius: 0 10px 10px 0;
+    padding: 12px 15px;
+    font-size: 13.5px;
+    color: #fef3c7;
+    margin-top: 14px;
+  }
+
+  /* Grids */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .grid-2-uneven { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 20px; align-items: start; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+
+  /* Fate Table */
+  .mini-table {
+    width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 14px;
+  }
+  .mini-table th, .mini-table td {
+    padding: 11px 13px; text-align: left; border-bottom: 1px solid var(--border);
+  }
+  .mini-table thead th { background: rgba(255,255,255,0.03); color: #fff; font-weight: 700; }
+  .mini-table tbody tr:last-child td { border-bottom: none; }
+
+  /* 3-Layer Multi-step Grid */
+  .layer-grid {
+    display: grid;
+    grid-template-columns: 88px repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 16px;
+    min-width: 560px;
+  }
+  .lg-head {
+    text-align: center; font-size: 12.5px; font-weight: 700;
+    padding: 8px 6px; border-radius: 8px; background: var(--bg-elev);
+    border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .lg-head.active-col {
+    background: var(--cyan-soft); border-color: var(--cyan); color: #fff;
+  }
+  .lg-row-label {
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+    color: var(--text-muted); background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border); border-radius: 9px; padding: 8px 4px; text-align: center;
+  }
+  .lg-cell {
+    border-radius: 10px; padding: 9px 8px;
+    border: 1px solid var(--border); background: rgba(15, 23, 42, 0.5);
+    min-height: 68px; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; gap: 4px;
+    transition: all 0.25s; font-size: 11.5px; text-align: center;
+  }
+  .lg-cell.past-cell {
+    background: rgba(52, 211, 153, 0.1);
+    border-color: rgba(52, 211, 153, 0.35);
+  }
+  .lg-cell.cur-cell {
+    background: rgba(56, 189, 248, 0.18);
+    border-color: var(--cyan);
+    box-shadow: 0 0 18px rgba(56, 189, 248, 0.22);
+  }
+  .lg-cell.future-cell {
+    opacity: 0.25; border-style: dashed;
+  }
+  .kv-badge {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    padding: 2px 7px; border-radius: 6px;
+    background: rgba(52, 211, 153, 0.2); color: var(--emerald);
+    border: 1px solid rgba(52, 211, 153, 0.45);
+  }
+  .ghost-badge {
+    font-family: var(--font-mono); font-size: 10px;
+    color: #64748b; text-decoration: line-through;
+  }
+  .active-beam {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    color: #fef3c7; background: rgba(251, 191, 36, 0.2);
+    border: 1px solid rgba(251, 191, 36, 0.45); padding: 2px 7px; border-radius: 6px;
+  }
+
+  /* Section 2: 5-Step Micro-Pipeline */
+  .stepper-row {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 18px;
+  }
+  .step-pill {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 12px; padding: 13px 10px; cursor: pointer;
+    transition: all 0.2s; text-align: center; position: relative;
+  }
+  .step-pill:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .step-pill.active {
+    background: linear-gradient(180deg, rgba(56,189,248,0.18), rgba(19,28,49,0.95));
+    border-color: var(--cyan); box-shadow: 0 0 20px rgba(56,189,248,0.16);
+  }
+  .step-pill .s-idx {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 800;
+    color: var(--cyan); margin-bottom: 4px;
+  }
+  .step-pill .s-name { font-size: 13.5px; font-weight: 700; }
+  .step-pill .s-dim { font-size: 11px; font-family: var(--font-mono); color: var(--text-dim); margin-top: 4px; }
+
+  /* SwiGLU & MoE Interactive Visualizer */
+  .gate-neuron-grid {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 14px;
+  }
+  .neuron-card {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 8px; text-align: center; transition: all 0.3s;
+  }
+  .neuron-card.open {
+    background: rgba(167, 139, 250, 0.16); border-color: var(--violet);
+    box-shadow: 0 0 16px rgba(167, 139, 250, 0.22);
+  }
+  .neuron-bar-wrap {
+    width: 16px; height: 64px; background: rgba(255,255,255,0.06);
+    border-radius: 999px; margin: 8px auto; position: relative; overflow: hidden;
+  }
+  .neuron-bar-fill {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    border-radius: 999px; transition: height 0.35s ease;
+  }
+
+  .moe-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px;
+  }
+  .expert-card {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 11px; padding: 12px; text-align: center; transition: all 0.28s;
+  }
+  .expert-card.fired {
+    background: linear-gradient(135deg, rgba(52,211,153,0.18), rgba(56,189,248,0.14));
+    border-color: var(--emerald);
+    box-shadow: 0 0 18px rgba(52,211,153,0.2);
+    transform: translateY(-2px);
+  }
+  .expert-card.sleeping { opacity: 0.42; }
+
+  /* Section 3: Sampling Lab */
+  .controls-bar {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px; margin-top: 16px;
+  }
+  .slider-row label {
+    display: flex; justify-content: space-between; font-size: 13px;
+    font-weight: 600; margin-bottom: 6px;
+  }
+  .slider-row span.val { font-family: var(--font-mono); color: var(--cyan); font-weight: 800; }
+  input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: pointer; }
+
+  .prob-chart {
+    margin-top: 18px; display: flex; flex-direction: column; gap: 9px;
+  }
+  .prob-row {
+    display: grid; grid-template-columns: 82px 66px 1fr 140px;
+    align-items: center; gap: 12px;
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 14px; transition: all 0.25s;
+  }
+  .prob-row.kept { border-color: rgba(56, 189, 248, 0.35); }
+  .prob-row.pruned { opacity: 0.42; border-style: dashed; }
+  .prob-row.winner {
+    background: rgba(52, 211, 153, 0.18);
+    border-color: var(--emerald);
+    box-shadow: 0 0 22px rgba(52, 211, 153, 0.25);
+    transform: scale(1.012);
+  }
+  .prob-word { font-weight: 700; font-size: 14.5px; }
+  .prob-logit { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
+  .prob-track {
+    height: 14px; background: rgba(255,255,255,0.06);
+    border-radius: 999px; overflow: hidden; position: relative;
+  }
+  .prob-fill {
+    height: 100%; border-radius: 999px; transition: width 0.3s ease;
+  }
+  .prob-stats {
+    font-family: var(--font-mono); font-size: 12px; text-align: right; white-space: nowrap;
+  }
+
+  .sample-output-box {
+    margin-top: 16px; padding: 14px 18px; border-radius: 12px;
+    background: linear-gradient(90deg, rgba(52,211,153,0.12), rgba(56,189,248,0.12));
+    border: 1px solid rgba(52, 211, 153, 0.38);
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+  }
+
+  /* Summary Cards */
+  .summary-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px; transition: transform 0.2s, border-color 0.2s;
+  }
+  .summary-card:hover { transform: translateY(-3px); border-color: var(--border-strong); }
+  .summary-card .num { font-family: var(--font-mono); font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+  .summary-card h4 { font-size: 15px; margin-bottom: 6px; }
+  .summary-card p { font-size: 13px; color: var(--text-muted); }
+
+  footer {
+    margin-top: 64px; text-align: center; font-size: 13px;
+    color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 24px;
+  }
+
+  @keyframes dashMove {
+    from { stroke-dashoffset: 24; }
+    to { stroke-dashoffset: 0; }
+  }
+  .flow-line { stroke-dasharray: 6 6; animation: dashMove 1s linear infinite; }
+
+  @media (max-width: 920px) {
+    .grid-2, .grid-2-uneven, .controls-bar { grid-template-columns: 1fr; }
+    .stepper-row { grid-template-columns: repeat(2, 1fr); }
+    .gate-neuron-grid { grid-template-columns: repeat(3, 1fr); }
+    .moe-grid, .grid-4 { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 580px) {
+    .prob-row { grid-template-columns: 70px 1fr 105px; }
+    .prob-logit { display: none; }
+    .stepper-row, .moe-grid, .grid-4 { grid-template-columns: 1fr; }
+    .container { padding: 0 16px 64px; }
+    .card { padding: 16px; }
+  }
+</style>
+  <meta name="ai-title" content="深入图解 LLM 推理（下）：KV Cache 本质、层内后半程与解码采样" />
+  <meta name="ai-category" content="核心架构" />
+  <meta name="ai-tags" content="KV Cache, LLM, MoE, RMSNorm, 大模型, SwiGLU" />
+  <meta name="description" content="彻底厘清 KV Cache 显存里真正存了什么、为什么历史 O 不重算也不缓存，再逐层解剖从 Attention 输出 o 经过 W_O、RMSNorm、SwiGLU/MoE、LM Head 到 Top-P / Min-P 采样的完整生命史。" />
+  <meta name="ai-created" content="2026-11-26T06:50:03Z" />
+  <meta name="ai-updated" content="2026-11-26T06:50:07Z" />
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <a href="#" class="brand">
+      <span class="brand-dot"></span>
+      LLM 推理全链路交互图解（下篇）
+    </a>
+    <div class="nav-links">
+      <a href="#sec-kv">01 为何只有 KV（无 Q 无 O）</a>
+      <a href="#sec-after-o">02 算完 o 之后的 5 步</a>
+      <a href="#sec-decode">03 最后一层吐字与采样</a>
+      <a href="#sec-loop">04 端到端闭环总结</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="hero-badge">交互式可视化教学指南 · 下篇：从 KV Cache 到吐出下一个字</div>
+    <h1>KV Cache 为何不含 Q 与 O？<br />算完 o 之后，大模型如何一步步吐出下一个字</h1>
+    <p>彻底厘清 KV Cache 显存里真正存了什么、为什么历史 O 不重算也不缓存，再逐层解剖从 Attention 输出 <code>o</code> 经过 W_O、RMSNorm、SwiGLU/MoE、LM Head 到 Top-P / Min-P 采样的完整生命史。</p>
+    <div class="pill-row">
+      <span class="pill">只存 K, V（零 Q 零 O）</span>
+      <span class="pill">W_O 跨头融合</span>
+      <span class="pill">SwiGLU 门控 / MoE 路由</span>
+      <span class="pill">LM Head 词表点积</span>
+      <span class="pill">Temperature / Top-P / Min-P</span>
+    </div>
+  </header>
+
+  <!-- ========================================================
+       SECTION 01: WHY KV CACHE HAS ONLY K & V (NO Q, NO O)
+       ======================================================== -->
+  <section id="sec-kv">
+    <div class="section-head">
+      <span class="section-num">01</span>
+      <h2>为什么 KV Cache 只存 K 和 V？（既不含 Q，也不含 O）</h2>
+    </div>
+    <p class="section-desc">
+      核心铁律：<strong>“历史结果不变、不用重算” ≠ “后续需要缓存复用”</strong>。在第 <code>t</code> 步 Decode 阶段，只有当前新词的 <code>q_t</code> 沿着垂直单通道向上爬升，每层只需横向读取存好的历史 <code>K, V</code>；所有历史 <code>Q</code> 和历史 <code>O</code> 根本没有出现在公式里，用完当场销毁！
+    </p>
+
+    <!-- Lab 1A: Matrix Multiplication X-Ray -->
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <div class="card-title">
+            交互实验 1：第 t 步注意力矩阵透视器
+            <span class="tag tag-cyan">切换有无 KV Cache</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            直观对比全量傻算（算出 t 行却扔掉前 t-1 行）与开启 KV Cache 后（只用 1 行 <code>q_t</code> 直出 <code>o_t</code>）的算力天壤之别。
+          </div>
+        </div>
+        <div class="btn-group" id="kvMatrixMode">
+          <button class="btn active" data-mode="cache">开启 KV Cache（单行直出 o_t）</button>
+          <button class="btn" data-mode="nocache">无 KV Cache（全量傻算浪费）</button>
+        </div>
+      </div>
+
+      <div class="svg-stage">
+        <svg id="kvMatrixSvg" viewBox="0 0 920 250" width="100%" style="min-width:720px;display:block;"></svg>
+      </div>
+
+      <div id="kvMatrixNote" class="callout-emerald"></div>
+    </div>
+
+    <!-- Lab 1B: 3-Layer Decode Animator + Why No O Cache -->
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <div class="card-title">
+            交互实验 2：多层直通道推演——历史 O 到底去哪儿了？
+            <span class="tag tag-emerald">点击步进观察</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            观察为什么第 2 层不需要第 1 层的历史 <code>o_1..o_{t-1}</code>：因为每一层都各自把“成品 K、V”存进了本层缓存！
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn-action" id="btnStepLayer">推进一步 (+1 Token)</button>
+          <button class="btn-ghost" id="btnResetLayer">重置到第 1 词</button>
+        </div>
+      </div>
+
+      <div style="overflow-x:auto;">
+        <div class="layer-grid" id="layerGrid"></div>
+      </div>
+
+      <div class="grid-2" style="margin-top:20px;">
+        <div class="card-sub">
+          <div class="card-title" style="font-size:14.5px;">历史矩阵 Q / K / V / O 的最终命运</div>
+          <table class="mini-table">
+            <thead>
+              <tr>
+                <th>历史矩阵</th>
+                <th>新词来后变不变？</th>
+                <th>第 t 步还要读吗？</th>
+                <th>最终处理</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong style="color:var(--emerald);">历史 K, V</strong></td>
+                <td>不变</td>
+                <td><strong style="color:var(--emerald);">要读！</strong></td>
+                <td><span class="tag tag-emerald">永久缓存复用</span></td>
+              </tr>
+              <tr>
+                <td><strong style="color:var(--amber);">历史 Q</strong></td>
+                <td>不变</td>
+                <td style="color:var(--rose);">不读</td>
+                <td><span class="tag tag-rose">不重算、不缓存</span></td>
+              </tr>
+              <tr>
+                <td><strong style="color:var(--cyan);">历史 O</strong></td>
+                <td>不变</td>
+                <td style="color:var(--rose);">不读</td>
+                <td><span class="tag tag-rose">不重算、不缓存</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card-sub">
+          <div class="card-title" style="font-size:14.5px;">
+            灵魂追问：为何不反过来“存上一层的 O，省掉下一层的 K、V”？
+          </div>
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">
+            既然第 2 层的 K、V 是由第 1 层的 O 算出来的，反过来存 O 不行吗？<strong>答案是算力和显存双重血亏：</strong>
+          </p>
+          <div style="font-size:13px;display:flex;flex-direction:column;gap:10px;">
+            <div style="background:rgba(251,113,133,0.08);border:1px solid rgba(251,113,133,0.28);padding:10px 12px;border-radius:8px;">
+              <strong style="color:var(--rose);">① 算力血亏：</strong>如果只存历史 O，每生成一个新词，都得把历史上万个词的 O 重新跑一遍庞大的 <strong>FFN + W_K / W_V 矩阵乘</strong>才能还原出 K、V！
+            </div>
+            <div style="background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.28);padding:10px 12px;border-radius:8px;">
+              <strong style="color:var(--emerald);">② 显存也亏：</strong>现代大模型采用 <strong>GQA / DeepSeek MLA</strong> 压缩技术，每层存 K、V 的体积往往只有存全维度隐藏状态 O 的 <strong>1/4 ~ 1/16</strong>！
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 02: 5 STEPS AFTER GENERATING o IN EVERY LAYER
+       ======================================================== -->
+  <section id="sec-after-o">
+    <div class="section-head">
+      <span class="section-num">02</span>
+      <h2>每层算完 Attention 输出 o 之后：Block 后半段的 5 步拆解</h2>
+    </div>
+    <p class="section-desc">
+      注意：<strong>不仅第 1 ~ N-1 个中间层要走这 5 步，最后一层（第 N 层）同样必须先走完这 5 步</strong>，把 FFN/MoE 的非线性加工全部做完，才会离开堆叠区去预测下一个词。点击下方任意步骤查看公式与原理。
+    </p>
+
+    <div class="card">
+      <div class="stepper-row" id="afterOStepper">
+        <div class="step-pill active" data-step="wo">
+          <div class="s-idx">STEP 1</div>
+          <div class="s-name">W_O 线性融合</div>
+          <div class="s-dim">Concat(heads) · W_O</div>
+        </div>
+        <div class="step-pill" data-step="res1">
+          <div class="s-idx">STEP 2</div>
+          <div class="s-name">第一次残差相加</div>
+          <div class="s-dim">h' = x_in + AttnOut</div>
+        </div>
+        <div class="step-pill" data-step="norm2">
+          <div class="s-idx">STEP 3</div>
+          <div class="s-name">RMSNorm 校准</div>
+          <div class="s-dim">u = RMSNorm(h')</div>
+        </div>
+        <div class="step-pill" data-step="ffn">
+          <div class="s-idx">STEP 4</div>
+          <div class="s-name">FFN / MoE 加工</div>
+          <div class="s-dim">d → 4d → d (非线性)</div>
+        </div>
+        <div class="step-pill" data-step="res2">
+          <div class="s-idx">STEP 5</div>
+          <div class="s-name">第二次残差相加</div>
+          <div class="s-dim">x_out = h' + FFNOut</div>
+        </div>
+      </div>
+
+      <div class="card-sub" id="afterODetail"></div>
+    </div>
+
+    <!-- Interactive Lab 2: SwiGLU vs MoE -->
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <div class="card-title">
+            交互实验 3：深入 Step 4 核心——SwiGLU 门控 vs. MoE 稀疏专家路由
+            <span class="tag tag-violet">点击切换架构与输入语境</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            Attention 只做线性加权平均；真正的非线性推理、事实记忆提取与超大参数扩容，全靠这一步的 FFN / MoE！
+          </div>
+        </div>
+        <div class="btn-group" id="ffnArchToggle">
+          <button class="btn active" data-arch="swiglu">稠密模型：SwiGLU 门控</button>
+          <button class="btn" data-arch="moe">万亿旗舰：MoE 混合专家</button>
+        </div>
+      </div>
+
+      <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:13px;color:var(--text-muted);font-weight:600;">选择当前处理的 Token 语境：</span>
+        <div class="btn-group" id="contextPicker">
+          <button class="btn active" data-ctx="paris">“法国的首都是___”</button>
+          <button class="btn" data-ctx="code">“def quick_sort(arr):”</button>
+          <button class="btn" data-ctx="poem">“床前明月光，疑是___”</button>
+          <button class="btn" data-ctx="math">“求 ∫ x²·eˣ dx =”</button>
+        </div>
+      </div>
+
+      <div id="ffnLabBody" style="margin-top:14px;"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 03: FINAL LAYER (STEPS 6~9) & SAMPLING PLAYGROUND
+       ======================================================== -->
+  <section id="sec-decode">
+    <div class="section-head">
+      <span class="section-num">03</span>
+      <h2>最后一层（Layer N）专属 4 步：从隐藏向量变成 1 个具体文字</h2>
+    </div>
+    <p class="section-desc">
+      当最后一层走完 Step 5 得到终极隐藏状态 <code>h_final ∈ ℝ^(1×d)</code> 后，模型不再向上传给下一层，而是通过 <strong>Final RMSNorm → LM Head 词表投影 → Temperature + Softmax → 解码采样</strong> 四步拍板吐出一个词。
+    </p>
+
+    <!-- Steps 6 & 7 Explainer Cards -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">
+          <span class="tag tag-cyan">STEP 6</span>
+          最终归一化（Final RMSNorm）
+        </div>
+        <div class="formula-box">ĥ = RMSNorm_final( h_final )</div>
+        <p style="font-size:13.5px;color:var(--text-muted);">
+          因为在现代 Pre-Norm 架构中，残差主干道从第 1 层一路做纯加法叠到第 80~120 层（<code>x₀ + Δ₁ + Δ₂ + … + Δ₂ₙ</code>），向量模长早已累积膨胀。在乘以庞大的词表矩阵前，必须用最后一次 RMSNorm 把尺度校准归位，否则 Logits 打分会严重漂移。
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span class="tag tag-violet">STEP 7</span>
+          词表线性投影（LM Head / Unembedding）
+        </div>
+        <div class="formula-box">z = ĥ · W_lm_head  ∈ ℝ^(1 × V)   (V ≈ 150,000 词表)</div>
+        <p style="font-size:13.5px;color:var(--text-muted);">
+          <strong>几何本质：</strong><code>W_lm_head</code> 的每一列都对应词典里一个词的“语义原型”。矩阵乘法就是在把<strong>“模型大脑此刻想表达的意思 ĥ”</strong>与<strong>字典里 15 万个词逐一做点积比对相似度</strong>——越吻合的词，原始得分（<strong>Logits z</strong>）越高！
+        </p>
+      </div>
+    </div>
+
+    <!-- Interactive Lab 4: Temperature + Softmax + Decoding Sampling Playground -->
+    <div class="card" style="margin-top:20px;">
+      <div class="flex-between">
+        <div>
+          <div class="card-title">
+            <span class="tag tag-emerald">STEP 8 &amp; 9 交互实验室</span>
+            温度缩放（Temperature）、Softmax 与 4 种采样算法实时模拟
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            拖动 Temperature 和采样阈值，观察候选词概率如何变形与被动态截断，再点击“抽签吐字”看它回流第 1 层！
+          </div>
+        </div>
+        <div class="btn-group" id="scenarioToggle">
+          <button class="btn ac
