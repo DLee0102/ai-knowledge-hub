@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>深入图解多头注意力机制（MHA）及现代 Transformer 工业实现</title>
+<style>
+  :root {
+    --bg: #080c16;
+    --bg-elev: #0f1626;
+    --card: #131c31;
+    --border: rgba(148, 163, 184, 0.16);
+    --border-strong: rgba(148, 163, 184, 0.34);
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+
+    --cyan: #38bdf8;
+    --cyan-soft: rgba(56, 189, 248, 0.14);
+    --emerald: #34d399;
+    --emerald-soft: rgba(52, 211, 153, 0.14);
+    --violet: #a78bfa;
+    --violet-soft: rgba(167, 139, 250, 0.15);
+    --amber: #fbbf24;
+    --amber-soft: rgba(251, 191, 36, 0.14);
+    --rose: #fb7185;
+    --rose-soft: rgba(251, 113, 133, 0.14);
+
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-sans);
+    background:
+      radial-gradient(ellipse 80% 50% at 15% -10%, rgba(167, 139, 250, 0.13), transparent 60%),
+      radial-gradient(ellipse 75% 50% at 85% 0%, rgba(56, 189, 248, 0.12), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Navbar */
+  .navbar {
+    position: sticky; top: 0; z-index: 100;
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    background: rgba(8, 12, 22, 0.8);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1180px; margin: 0 auto; padding: 12px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 15px; color: var(--text); text-decoration: none;
+  }
+  .brand-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--violet), var(--cyan));
+    box-shadow: 0 0 12px var(--violet);
+  }
+  .nav-links { display: flex; gap: 6px; flex-wrap: wrap; }
+  .nav-links a {
+    text-decoration: none; color: var(--text-muted); font-size: 13px; font-weight: 500;
+    padding: 6px 12px; border-radius: 999px; transition: all 0.2s; border: 1px solid transparent;
+  }
+  .nav-links a:hover { color: var(--text); background: rgba(255,255,255,0.06); border-color: var(--border); }
+
+  /* Layout */
+  .container { max-width: 1180px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* Hero */
+  .hero { padding: 58px 0 38px; text-align: center; }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    color: var(--violet); background: var(--violet-soft);
+    border: 1px solid rgba(167, 139, 250, 0.35); margin-bottom: 18px;
+  }
+  .hero h1 {
+    font-size: clamp(27px, 4.2vw, 44px);
+    font-weight: 800; letter-spacing: -0.02em; line-height: 1.22; margin-bottom: 14px;
+    background: linear-gradient(135deg, #ffffff 10%, #ddd6fe 50%, #7dd3fc 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .hero p { max-width: 780px; margin: 0 auto 24px; font-size: 15.5px; color: var(--text-muted); }
+  .pill-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    font-size: 12px; font-family: var(--font-mono); padding: 5px 12px; border-radius: 8px;
+    background: var(--bg-elev); border: 1px solid var(--border); color: var(--text-muted);
+  }
+
+  /* Sections */
+  section { margin-top: 56px; scroll-margin-top: 76px; }
+  .section-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 10px; }
+  .section-num {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+    color: var(--violet); background: var(--violet-soft);
+    border: 1px solid rgba(167, 139, 250, 0.35); padding: 3px 10px; border-radius: 999px;
+  }
+  .section-head h2 { font-size: clamp(21px, 2.5vw, 28px); font-weight: 700; letter-spacing: -0.01em; }
+  .section-desc { color: var(--text-muted); font-size: 15px; max-width: 900px; margin-bottom: 22px; }
+
+  /* Cards & Tags */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow);
+  }
+  .card + .card { margin-top: 20px; }
+  .card-sub {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 18px;
+  }
+  .card-title {
+    font-size: 16px; font-weight: 700; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .tag {
+    font-size: 11px; font-family: var(--font-mono);
+    padding: 2px 8px; border-radius: 999px; font-weight: 600;
+  }
+  .tag-cyan { background: var(--cyan-soft); color: var(--cyan); border: 1px solid rgba(56,189,248,0.32); }
+  .tag-emerald { background: var(--emerald-soft); color: var(--emerald); border: 1px solid rgba(52,211,153,0.32); }
+  .tag-violet { background: var(--violet-soft); color: var(--violet); border: 1px solid rgba(167,139,250,0.32); }
+  .tag-amber { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(251,191,36,0.32); }
+  .tag-rose { background: var(--rose-soft); color: var(--rose); border: 1px solid rgba(251,113,133,0.32); }
+
+  /* Controls */
+  .btn-group {
+    display: inline-flex; background: var(--bg); padding: 4px;
+    border-radius: 10px; border: 1px solid var(--border); gap: 4px; flex-wrap: wrap;
+  }
+  .btn {
+    border: none; background: transparent; color: var(--text-muted);
+    font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+    padding: 7px 14px; border-radius: 7px; cursor: pointer; transition: all 0.2s;
+  }
+  .btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+  .btn.active {
+    background: linear-gradient(135deg, rgba(167,139,250,0.25), rgba(56,189,248,0.22));
+    color: #fff; border: 1px solid rgba(167,139,250,0.5);
+    box-shadow: 0 0 16px rgba(167,139,250,0.16);
+  }
+  .btn-action {
+    background: linear-gradient(135deg, #7c3aed, #0284c7);
+    color: #fff; border: none; padding: 8px 16px; border-radius: 9px;
+    font-size: 13px; font-weight: 700; cursor: pointer; transition: transform 0.15s, filter 0.2s;
+  }
+  .btn-action:hover { filter: brightness(1.12); transform: translateY(-1px); }
+  .btn-action:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .btn-ghost {
+    background: rgba(255,255,255,0.05); color: var(--text);
+    border: 1px solid var(--border); padding: 8px 14px; border-radius: 9px;
+    font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); border-color: var(--border-strong); }
+
+  .flex-between { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .grid-2-uneven { display: grid; grid-template-columns: 1.18fr 0.82fr; gap: 20px; align-items: start; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+
+  .svg-stage {
+    width: 100%; background: #070b14;
+    border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px; overflow-x: auto; margin-top: 16px;
+  }
+  .formula-box {
+    background: #070b14; border: 1px solid rgba(167, 139, 250, 0.28);
+    border-radius: 10px; padding: 12px 16px; font-family: var(--font-mono);
+    font-size: 13px; color: #ede9fe; margin: 12px 0; overflow-x: auto; text-align: center;
+  }
+  .callout-cyan {
+    background: rgba(56, 189, 248, 0.08); border-left: 3px solid var(--cyan);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #e0f2fe; margin-top: 14px;
+  }
+  .callout-emerald {
+    background: rgba(52, 211, 153, 0.08); border-left: 3px solid var(--emerald);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #d1fae5; margin-top: 14px;
+  }
+  .callout-amber {
+    background: rgba(251, 191, 36, 0.08); border-left: 3px solid var(--amber);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #fef3c7; margin-top: 14px;
+  }
+
+  /* Section 1: Multi-head vs Single-head ledger */
+  .ledger-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+  .ledger-box {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; text-align: center;
+  }
+  .ledger-val { font-family: var(--font-mono); font-size: 19px; font-weight: 800; margin: 4px 0; }
+  .ledger-sub { font-size: 12px; color: var(--text-muted); }
+
+  /* Section 2: Tensor Stepper */
+  .tensor-steps {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 14px;
+  }
+  .t-step {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 8px; cursor: pointer; text-align: center; transition: all 0.2s;
+  }
+  .t-step:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .t-step.active {
+    background: linear-gradient(180deg, rgba(56,189,248,0.2), rgba(19,28,49,0.95));
+    border-color: var(--cyan); box-shadow: 0 0 18px rgba(56,189,248,0.16);
+  }
+  .t-step .idx { font-family: var(--font-mono); font-size: 10.5px; color: var(--cyan); font-weight: 800; }
+  .t-step .name { font-size: 12.5px; font-weight: 700; margin-top: 2px; }
+  .t-step .shape { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-dim); margin-top: 3px; }
+
+  /* Section 3: KV Memory Bars */
+  .mem-bar-wrap { margin-top: 14px; display: flex; flex-direction: column; gap: 11px; }
+  .mem-row {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; transition: all 0.22s; cursor: pointer;
+  }
+  .mem-row.selected {
+    border-color: var(--cyan); background: rgba(56, 189, 248, 0.08);
+    box-shadow: 0 0 16px rgba(56, 189, 248, 0.14);
+  }
+  .mem-row-top {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px; font-weight: 700; margin-bottom: 6px;
+  }
+  .mem-track {
+    height: 14px; background: rgba(255,255,255,0.06); border-radius: 999px;
+    position: relative; overflow: visible;
+  }
+  .mem-fill { height: 100%; border-radius: 999px; transition: width 0.35s ease; max-width: 100%; }
+  .h100-line {
+    position: absolute; top: -4px; bottom: -4px; width: 2px;
+    background: var(--rose); box-shadow: 0 0 8px var(--rose); z-index: 2;
+  }
+
+  /* Section 4: FlashAttention Tile Grid */
+  .tile-grid {
+    display: grid; grid-template-columns: 44px repeat(4, 1fr); gap: 6px; margin-top: 10px;
+  }
+  .tile-head {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+    text-align: center; padding: 4px;
+  }
+  .tile-cell {
+    height: 44px; border-radius: 8px; border: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.6); display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: var(--text-dim);
+    transition: all 0.25s;
+  }
+  .tile-cell.skipped { opacity: 0.25; border-style: dashed; background: transparent; }
+  .tile-cell.done { background: rgba(52,211,153,0.16); border-color: rgba(52,211,153,0.45); color: var(--emerald); }
+  .tile-cell.running {
+    background: rgba(251,191,36,0.26); border-color: var(--amber); color: #fff;
+    box-shadow: 0 0 18px rgba(251,191,36,0.35); transform: scale(1.05);
+  }
+
+  /* Hybrid Layer Strip */
+  .hybrid-strip {
+    display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin-top: 12px;
+  }
+  .h-block {
+    border-radius: 9px; padding: 10px 6px; text-align: center;
+    font-size: 11.5px; font-weight: 700; border: 1px solid var(--border);
+  }
+  .h-block.fast { background: rgba(56,189,248,0.12); border-color: rgba(56,189,248,0.35); color: #bae6fd; }
+  .h-block.full { background: rgba(167,139,250,0.22); border-color: var(--violet); color: #fff; box-shadow: 0 0 14px rgba(167,139,250,0.2); }
+
+  /* Section 5: Interactive Code Explorer */
+  .code-panel {
+    background: #070b14; border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.72;
+    overflow-x: auto;
+  }
+  .code-block {
+    padding: 4px 10px; border-radius: 7px; border-left: 3px solid transparent;
+    transition: all 0.2s; cursor: pointer; white-space: pre;
+  }
+  .code-block:hover { background: rgba(255,255,255,0.04); }
+  .code-block.hl {
+    background: rgba(56, 189, 248, 0.14); border-left-color: var(--cyan);
+  }
+  .kw { color: #c084fc; }
+  .fn { color: #38bdf8; }
+  .cm { color: #64748b; }
+  .num { color: #fbbf24; }
+  .code-nav { display: flex; flex-direction: column; gap: 8px; }
+  .code-nav-btn {
+    text-align: left; background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 10px; padding: 11px 14px; color: var(--text); cursor: pointer;
+    transition: all 0.2s; font-family: var(--font-sans);
+  }
+  .code-nav-btn:hover { border-color: var(--border-strong); }
+  .code-nav-btn.active {
+    background: rgba(56,189,248,0.14); border-color: var(--cyan);
+  }
+  .code-nav-btn .t { font-size: 13.5px; font-weight: 700; display: block; }
+  .code-nav-btn .d { font-size: 12px; color: var(--text-muted); margin-top: 2px; display: block; }
+
+  input[type="range"] { width: 100%; accent-color: var(--violet); cursor: pointer; }
+  footer {
+    margin-top: 64px; text-align: center; font-size: 13px;
+    color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 24px;
+  }
+
+  @keyframes pulseBeam { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+  @media (max-width: 920px) {
+    .grid-2, .grid-2-uneven, .grid-3, .ledger-grid { grid-template-columns: 1fr; }
+    .tensor-steps { grid-template-columns: repeat(3, 1fr); }
+    .hybrid-strip { grid-template-columns: repeat(4, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .tensor-steps { grid-template-columns: repeat(2, 1fr); }
+    .container { padding: 0 16px 64px; }
+    .card { padding: 16px; }
+  }
+</style>
+  <meta name="ai-title" content="深入图解多头注意力机制（MHA）及现代 Transformer 工业实现" />
+  <meta name="ai-category" content="核心架构" />
+  <meta name="ai-tags" content="GQA, Transformer, MLA, FlashAttention, RoPE, KV Cache" />
+  <meta name="description" content="从“为什么必须拆成多头”与零循环张量变形出发，直击今天 Llama / Qwen / DeepSeek 等前沿大模型的核心底牌：GQA/MLA 显存瘦身、RoPE 旋转位置编码、QK-Norm 稳压、FlashAttention 分块算子与百万上下文混合架构。" />
+  <meta name="ai-created" content="2026-11-26T07:30:13Z" />
+  <meta name="ai-updated" content="2026-11-26T07:30:14Z" />
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <a href="#" class="brand">
+      <span class="brand-dot"></span>
+      多头注意力机制 · 原理与现代实现图解
+    </a>
+    <div class="nav-links">
+      <a href="#sec-why">01 为何需要多头</a>
+      <a href="#sec-tensor">02 零循环张量并行</a>
+      <a href="#sec-kv-evo">03 MHA→GQA→MLA</a>
+      <a href="#sec-modern">04 RoPE / FlashAttn / QK-Norm</a>
+      <a href="#sec-code">05 现代源码透视</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="hero-badge">交互式可视化教学指南 · 多头注意力（Multi-Head Attention）全解</div>
+    <h1>多头注意力机制原理<br />与现代 Transformer 五大工业级实现</h1>
+    <p>从“为什么必须拆成多头”与零循环张量变形出发，直击今天 Llama / Qwen / DeepSeek 等前沿大模型的核心底牌：<strong>GQA/MLA 显存瘦身、RoPE 旋转位置编码、QK-Norm 稳压、FlashAttention 分块算子</strong>与百万上下文混合架构。</p>
+    <div class="pill-row">
+      <span class="pill">零额外 FLOPs 红利</span>
+      <span class="pill">Reshape + Transpose 并行</span>
+      <span class="pill">GQA &amp; DeepSeek MLA</span>
+      <span class="pill">RoPE 相对旋转</span>
+      <span class="pill">FlashAttention O(L) 显存</span>
+    </div>
+  </header>
+
+  <!-- ========================================================
+       SECTION 01: WHY MULTI-HEAD?
+       ======================================================== -->
+  <section id="sec-why">
+    <div class="section-head">
+      <span class="section-num">01</span>
+      <h2>为什么一定要“多头”？（单头瓶颈与“免费红利”）</h2>
+    </div>
+    <p class="section-desc">
+      面对同一个词（例如句子里的代词<strong>「它」</strong>），模型需要同时捕捉指代主语、因果逻辑、动作语境等多种关联。单头只有一套 Softmax 权重，被迫把不同需求“糊成一团平均掉”；拆成多头后，每个头独立拥有一双不同焦点的眼睛。
+    </p>
+
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <div class="card-title">
+            交互实验 1：单头视角冲突 vs. 多头并行解耦
+            <span class="tag tag-violet">当前查询词：「它」</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            切换“单头模式”和“4 头并行模式”，对比注意力分布清晰度！在多头模式下可单独高亮某一个头。
+          </div>
+        </div>
+        <div class="btn-group" id="headCompareToggle">
+          <button class="btn" data-view="single">单头注意力（视角混杂）</button>
+          <button class="btn active" data-view="multi">多头注意力（4 个头各司其职）</button>
+        </div>
+      </div>
+
+      <div id="multiHeadFilters" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <span style="font-size:12.5px;color:var(--text-muted);font-weight:600;">查看指定注意力头：</span>
+        <div class="btn-group" id="subHeadButtons">
+          <button class="btn active" data-sh="all">全部 4 头叠加</button>
+          <button class="btn" data-sh="0" style="color:#38bdf8;">Head #1 指代头</button>
+          <button class="btn" data-sh="1" style="color:#34d399;">Head #2 因果头</button>
+          <button class="btn" data-sh="2" style="color:#a78bfa;">Head #3 动作语境头</button>
+          <button class="btn" data-sh="3" style="color:#fbbf24;">Head #4 句首锚点头</button>
+        </div>
+      </div>
+
+      <div class="svg-stage">
+        <svg id="whyMhaSvg" viewBox="0 0 880 255" width="100%" style="min-width:680px;display:block;"></svg>
+      </div>
+
+      <div id="whyMhaNote" class="callout-cyan"></div>
+
+      <!-- Free Lunch Ledger -->
+      <div class="ledger-grid">
+        <div class="ledger-box">
+          <div class="ledger-sub">总参数量对比（d=4096）</div>
+          <div class="ledger-val" style="color:var(--emerald);">4d² ＝ 4d²</div>
+          <div class="ledger-sub">32 个 128 维小头总参数 ＝ 1 个 4096 维大头</div>
+        </div>
+        <div class="ledger-box">
+          <div class="ledger-sub">QKᵀ 与 AV 矩阵乘 FLOPs</div>
+          <div class="ledger-val" style="color:var(--cyan);">L²d ＝ L²d</div>
+          <div class="ledger-sub">H × (L² × d/H) ＝ L²d，计算量完全一致！</div>
+        </div>
+        <div class="ledger-box">
+          <div class="ledger-sub">表达子空间数量</div>
+          <div class="ledger-val" style="color:var(--violet);">1 → 32 ~ 128 倍</div>
+          <div class="ledger-sub">几乎“零额外矩阵成本”换来数十双并行眼睛</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 02: TENSOR RESHAPE & PARALLEL EXECUTION
+       ======================================================== -->
+  <section id="sec-tensor">
+    <div class="section-head">
+      <span class="section-num">02</span>
+      <h2>底层张量怎么算？（告别 for 循环：维度腾挪并行术）</h2>
+    </div>
+    <p class="section-desc">
+      真实 GPU 代码绝不写 <code>for i in range(32):</code> 逐头循环，而是把 32 个头合并成一次大矩阵乘，再靠 <strong><code>reshape</code> 拆头 + <code>transpose</code> 把头数提到序列长度前面</strong>，直接交给 GPU 一次性批量矩阵乘（Batched MatMul）。
+    </p>
+
+    <div class="card">
+      <div class="flex-between">
+        <div class="card-title" style="margin:0;">
+          交互实验 2：张量形状 6 步演化模拟器
+          <span class="tag tag-cyan">以 B=2, L=1024, d=4096, H=32 为例</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-ghost" id="btnTensorPrev">← 上一步</button>
+          <button class="btn-action" id="btnTensorNext">下一步 →</button>
+        </div>
+      </div>
+
+      <div class="tensor-steps" id="tensorStepper">
+        <div class="t-step active" data-t="0"><div class="idx">STEP 1</div><div class="name">融合投影 QKV</div><div class="shape">[2, 1024, 4096]</div></div>
+        <div class="t-step" data-t="1"><div class="idx">STEP 2</div><div class="name">Reshape 拆头</div><div class="shape">[2, 1024, 32, 128]</div></div>
+        <div class="t-step" data-t="2"><div class="idx">STEP 3</div><div class="name">Transpose 并行</div><div class="shape">[2, 32, 1024, 128]</div></div>
+        <div class="t-step" data-t="3"><div class="idx">STEP 4</div><div class="name">批量注意力</div><div class="shape">[2, 32, 1024, 128]</div></div>
+        <div class="t-step" data-t="4"><div class="idx">STEP 5</div><div class="name">合并还原形状</div><div class="shape">[2, 1024, 4096]</div></div>
+        <div class="t-step" data-t="5"><div class="idx">STEP 6</div><div class="name">W_O 跨头混合</div><div class="shape">[2, 1024, 4096]</div></div>
+      </div>
+
+      <div class="svg-stage">
+        <svg id="tensorSvg" viewBox="0 0 880 230" width="100%" style="min-width:660px;display:block;"></svg>
+      </div>
+
+      <div id="tensorExplain" class="callout-emerald"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 03: MHA -> MQA -> GQA -> MLA + VRAM CALCULATOR
+       ======================================================== -->
+  <section id="sec-kv-evo">
+    <div class="section-head">
+      <span class="section-num">03</span>
+      <h2>现代魔改 ①：KV Cache 显存瘦身革命（MHA → MQA → GQA → MLA）</h2>
+    </div>
+    <p class="section-desc">
+      标准 MHA 在长上下文 Decode 时会把 GPU 显存和显存带宽彻底吃干抹净。点击切换四大现代多头变体，并拖动右侧上下文长度滑块，直击<strong>单条请求如何瞬间撑爆 80GB H100</strong>，以及 GQA 和 DeepSeek MLA 是如何破局的。
+    </p>
+
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:14px;">
+        <div class="btn-group" id="archEvoTabs">
+          <button class="btn" data-evo="mha">MHA（经典 1对1）</button>
+          <button class="btn" data-evo="mqa">MQA（全共享 1 组）</button>
+          <button class="btn active" data-evo="gqa">GQA（分组共享 · 最普及）</button>
+          <button class="btn" data-evo="mla">MLA（DeepSeek 潜空间压缩）</button>
+        </div>
+        <span class="tag tag-amber">以 70B 级模型（80层 / d=8192 / 64头 / FP16）单请求测算</span>
+      </div>
+
+      <div class="grid-2-uneven">
+        <!-- Left: Live Wiring SVG -->
+        <div>
+          <div class="svg-stage" style="margin-top:0;">
+            <svg id="evoSvg" viewBox="0 0 540 275" width="100%" style="min-width:420px;display:block;"></svg>
+          </div>
+          <div id="evoDetail" class="card-sub" style="margin-top:14px;"></div>
+        </div>
+
+        <!-- Right: Live KV Cache VRAM Calculator -->
+        <div class="card-sub">
+          <div class="flex-between" style="margin-bottom:8px;">
+            <strong style="font-size:14.5px;">实时 KV Cache 显存计算器</strong>
+            <span style="font-family:var(--font-mono);font-size:15px;font-weight:800;color:var(--cyan);" id="ctxLenVal">L = 32K tokens</span>
+          </div>
+          <input type="range" id="ctxSlider" min="4" max="128" step="4" value="32" />
+          <div style="display:flex;justify-content:space-between;font-size:11px;font-family:var(--font-mono);color:var(--text-dim);margin-top:3px;">
+            <span>4K</span><span>32K</span><span>64K</span><span>96K</span><span>128K</span>
+          </div>
+
+          <div class="mem-bar-wrap" id="memBars"></div>
+
+          <div style="margin-top:12px;font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:8px;">
+            <span style="display:inline-block;width:12px;height:3px;background:var(--rose);"></span>
+            <span>红线 = 单张 <strong>H100 (80 GB)</strong> 显存极限（注意：还不算模型权重本身！）</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 04: MODERN TECH TRIO (RoPE, FlashAttention, QK-Norm & Hybrid)
+       ======================================================== -->
+  <section id="sec-modern">
+    <div class="section-head">
+      <span class="section-num">04</span>
+      <h2>现代魔改 ②~⑤：RoPE 旋转编码、FlashAttention 与 QK-Norm / 混合架构</h2>
+    </div>
+    <p class="section-desc">
+      把这四项现代工程黑科技叠加在多头注意力上，才构成了今天能跑 128K~1M 上下文、训练百层不炸梯度的完整现代注意力引擎。切换下方三个交互实验逐一体验。
+    </p>
+
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:16px;">
+        <div class="btn-group" id="modernTechTabs">
+          <button class="btn active" data-mt="rope">实验 A：RoPE 旋转位置编码</button>
+          <button class="btn" data-mt="flash">实验 B：FlashAttention SRAM 分块动画</button>
+          <button class="btn" data-mt="qknorm">实验 C：QK-Norm 稳压 &amp; 百万上下文混合层</button>
+        </div>
+      </div>
+
+      <!-- TAB A: RoPE Interactive Circle -->
+      <div id="paneRope">
+        <div class="grid-2">
+          <div class="svg-stage" style="margin-top:0;display:flex;justify-content:center;">
+            <svg id="ropeSvg" viewBox="0 0 340 310" width="340" style="max-width:100%;display:block;"></svg>
+          </div>
+          <div class="card-sub">
+            <div class="card-title">亲手验证 RoPE 的相对位置魔力</div>
+            <p style="font-size:13.5px;color:var(--text-muted);margin-bottom:12px;">
+              RoPE 把每个头的向量两两分组，按 Token 所在位置 <code>m, n</code> 分别旋转角度 <code>m·θ</code> 和 <code>n·θ</code>。试试点击下方<strong>“同步平移”</strong>按钮：两根向量一起转动，但<strong>夹角和点积分数纹丝不动</strong>！
+            </p>
+
+            <div style="margin-bottom:12px;">
+              <div class="flex-between" style="font-size:13px;font-weight:600;margin-bottom:4px;">
+                <span style="color:var(--amber);">Query 位置 m</span>
+                <span id="ropeMVal" style="font-family:var(--font-mono);color:var(--amber);">m = 5</span>
+              </div>
+              <input type="range" id="ropeMSlider" min="0" max="16" value="5" />
+            </div>
+
+            <div style="margin-bottom:14px;">
+              <div class="flex-between" style="font-size:13px;font-weight:600;margin-bottom:4px;">
+                <span style="color:var(--cyan);">Key 位置 n</span>
+                <span id="ropeNVal" style="font-family:var(--font-mono);color:var(--cyan);">n = 2</span>
+              </div>
+              <input type="range" id="ropeNSlider" min="0" max="16" value="2" />
+            </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+              <button class="btn-action" id="btnRopeShift">↻ 同步平移 m+2, n+2（距离不变）</button>
+              <button class="btn-ghost" id="btnRopeReset">重置</button>
+            </div>
+
+            <div class="formula-box" id="ropeFormulaReadout"></div>
+            <div style="font-size:12.5px;color:var(--text-muted);">
+              <strong>进阶备注（MLA 的 Decoupled RoPE）：</strong>由于 RoPE 夹在 Q、K 中间会妨碍低秩矩阵吸收，DeepSeek MLA 为每个头单独辟出 64 维专带 RoPE 的“位置子头”，完美鱼与熊掌兼得！
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB B: FlashAttention Tiling Animation -->
+      <div id="paneFlash" style="display:none;">
+        <div class="flex-between" style="background:var(--bg-elev);padding:12px 16px;border-radius:11px;border:1px solid var(--border);margin-bottom:16px;">
+          <div>
+            <strong style="font-size:14px;">FlashAttention 核心思想：绝不在慢速显存（HBM）中分配巨大的 L×L 注意力矩阵！</strong>
+            <div style="font-size:12.5px;color:var(--text-muted);" id="flashStatusText">把 Q, K, V 切成小块流式搬入极高速 GPU 片上 SRAM，边读块边用 Online Softmax 动态更新结果 O。</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn-action" id="btnFlashStep">单步执行 Tile</button>
+            <button class="btn-ghost" id="btnFlashPlay">▶ 自动播放</button>
+            <button class="btn-ghost" id="btnFlashReset">重置</button>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card-sub" style="border-color:rgba(52,211,153,0.32);">
+            <div class="flex-between">
+              <strong style="color:var(--emerald);font-size:14px;">FlashAttention 分块执行图（因果跳过右上 6 块）</strong>
+              <span class="tag tag-emerald">显存 O(L) · 提速 2~4×</span>
+            </div>
+            <div class="tile-grid" id="flashTileGrid"></div>
+            <div style="margin-top:12px;padding:11px 13px;background:#070b14;border:1px solid rgba(251,191,36,0.35);border-radius:9px;font-family:var(--font-mono);font-size:12px;" id="sramMonitor"></div>
+          </div>
+
+          <div class="card-sub" style="border-color:rgba(251,113,133,0.32);">
+            <div class="flex-between">
+              <strong style="color:var(--rose);font-size:14px;">对比：传统实现为何会在长文本炸显存？</strong>
+              <span class="tag tag-rose">显存 O(L²) · HBM 瓶颈</span>
+            </div>
+            <p style="font-size:13.5px;color:var(--text-muted);margin-top:10px;">
+              按标准代码写 <code>S = Q @ K.T; P = softmax(S); O = P @ V</code> 时，GPU 必须把庞大的 <code>S</code> 和 <code>P</code>（形状 <code>[B, H, L, L]</code>）完整写回慢速 HBM 显存，再读回算 Softmax，再写回 HBM，再读回乘 V！
+            </p>
+            <div class="formula-box" style="border-color:rgba(251,113,133,0.35);color:#ffe4e6;">
+              当 L = 128K, H = 32, FP16 时：<br/>
+              单个 L×L 矩阵 = 32 × 131072² × 2B ≈ 1,024 GB（当场 OOM!）
+            </div>
+            <div class="callout-emerald" style="margin-top:10px;">
+              <strong>推理端双翼加持：</strong><br/>
+              • <strong>PagedAttention (vLLM)</strong>：像操作系统虚拟内存分页管理 KV Cache，消灭显存碎片；<br/>
+              • <strong>FlashDecoding</strong>：Decode 时沿历史长度 L 切块并行，让 1 个新词也能喂满整张 GPU！
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB C: QK-Norm & Hybrid Attention -->
+      <div id="paneQkNorm" style="display:none;">
+        <div class="grid-2">
+          <div class="card-sub">
+            <div class="flex-between">
+              <strong style="font-size:14.5px;">魔改 ③：QK-Norm（深层防爆稳压器）</strong>
+              <div class="btn-group" id="qkNormToggle">
+                <button class="btn active" data-qkn="on">开启 QK-Norm（现代标配）</button>
+                <button class="btn" data-qkn="off">关闭（深层 Logits 爆炸）</button>
+              </div>
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-top:8px;">
+              在 Qwen3、Gemma 2/3/4、Llama 4 中，拆头后、做 RoPE 前，对每个头的 Q 和 K 独立做一次 RMSNorm，把点积分数锁在安全区。
+            </p>
+            <div id="qkNormViz" style="margin-top:14px;"></div>
+          </div>
+
+          <div class="card-sub">
+            <div class="card-title" style="font-size:14.5px;">
+              魔改 ⑤：2025–2026 百万上下文混合注意力堆叠
+              <span class="tag tag-violet">兼顾速度与全局回忆</span>
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">
+              即便 FlashAttention 解决了显存，全注意力的 <code>O(L²)</code> 计算量在 1M 窗口依然沉重。现代旗舰（Qwen3.5/4、Gemma 4、DeepSeek DSA、MiniMax）采用<strong>异构层交替堆叠</strong>：
+            </p>
+            <div class="hybrid-strip">
+              <div class="h-block fast">L1<br/><span style="font-size:10px;opacity:.85;">局部/线性</span></div>
+              <div class="h-block fast">L2<br/><span style="font-size:10px;opacity:.85;">局部/线性</span></div>
+              <div class="h-block fast">L3<br/><span style="font-size:10px;opacity:.85;">局部/线性</span></div>
+              <div class="h-block full">L4<br/><span style="font-size:10px;">全局 Full</span></div>
+              <div class="h-block fast">L5<br/><span style="font-size:10px;opacity:.85;">局部/线性</span></div>
+              <div class="h-block fast">L6<br/><span style="font-size:10px;opacity:.85;">局部/线性</span></div>
+              <div class="h-block fast">L7<br/><span style="font-size:10px;opacity:.85;">局部/线性</span></div>
+              <div class="h-block full">L8<br/><span style="font-size:10px;">全局 Full</span></div>
+            </div>
+            <div class="callout-cyan" style="margin-top:14px;">
+              <strong>3:1 黄金配比（或动态块稀疏 DSA/NSA）：</strong><br/>
+              • <strong>75% 高速层</strong>（滑动窗口 SWA 或 Gated DeltaNet / Lightning 线性注意力）：复杂度 <code>O(L)</code>，KV 状态恒定极省显存；<br/>
+              • <strong>25% 全局层</strong>（Full GQA / MLA）：负责跨数十万 Token 的精准“大海捞针”检索！
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 05: INTERACTIVE MODERN PYTORCH CODE EXPLORER
+       ======================================================== -->
+  <section id="sec-code">
+    <div class="section-head">
+      <span class="section-num">05</span>
+      <h2>实战代码透视：现代 GQA 多头注意力逐段解析</h2>
+    </div>
+    <p class="section-desc">
+      点击右侧任意工程模块（或直接点击左侧代码块），高亮定位真实 PyTorch 代码行，将前面所有原理与工程细节一网打尽。
+    </p>
+
+    <div class="card">
+      <div class="grid-2-uneven">
+        <div class="code-panel" id="codePanel">
+          <div class="code-block" data-cb="0"><span class="kw">class</span> <span class="fn">ModernGQAAttention</span>(nn.Module):
+    <span class="cm"># Q 有 32 头，K/V 仅 8 头（每 4 个 Q 共享 1 组 KV，显存降 4×）</span>
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x, freqs_cis, kv_cache=<span class="kw">None</span>):
+        B, L, D = x.shape</div>
+
+          <div class="code-block hl" data-cb="1">        <span class="cm"># 1. 线性投影 + reshape 拆头 -> [B, L, H, head_dim]</span>
+        q = self.w_q(x).view(B, L, <span class="num">32</span>, <span class="num">128</span>)
+        k = self.w_k(x).view(B, L,  <span class="num">8</span>, <span class="num">128</span>)
+        v = self.w_v(x).view(B, L,  <span class="num">8</span>, <span class="num">128</span>)</div>
+
+          <div class="code-block" data-cb="2">        <span class="cm"># 2. QK-Norm：在 head_dim 上做 RMSNorm，防止深层点数爆炸</span>
+        q = self.q_norm(q)
+        k = self.k_norm(k)</div>
+
+          <div class="code-block" data-cb="3">        <span class="cm"># 3. RoPE：只旋转 Q 和 K 注入相对位置，V 保持纯内容不变</span>
+        q, k = <span class="fn">apply_rope</span>(q, k, freqs_cis)</div>
+
+          <div class="code-block" data-cb="4">        <span class="cm"># 4. 转置把头数提到 L 前面 -> [B, H, L, 128]，并更新本层 KV Cache</span>
+        q, k, v = q.transpose(<span class="num">1</span>, <span class="num">2</span>), k.transpose(<span class="num">1</span>, <span class="num">2</span>), v.transpose(<span class="num">1</span>, <span class="num">2</span>)
+        <span class="kw">if</span> kv_cache <span class="kw">is not None</span>:
+            k, v = kv_cache.<span class="fn">update</span>(k, v)   <span class="cm"># PagedAttention 原地追加</span></div>
+
+          <div class="code-block" data-cb="5">        <span class="cm"># 5. 底层直通 FlashAttention（原生零拷贝 GQA + 在线分块 Softmax）</span>
+        out = F.<span class="fn">scaled_dot_product_attention</span>(
+            q, k, v, is_causal=(L &gt; <span class="num">1</span>), enable_gqa=<span class="kw">True</span>
+        )   <span class="cm"># 输出形状: [B, 32, L, 128]</span></div>
+
+          <div class="code-block" data-cb="6">        <span class="cm"># 6. 反向转置合并多头 -> [B, L, 4096]，过 W_O 跨头混合！</span>
+        out = out.transpose(<span class="num">1</span>, <span class="num">2</span>).contiguous().view(B, L, D)
+        <span class="kw">return</span> self.<span class="fn">w_o</span>(out)</div>
+        </div>
+
+        <div class="code-nav" id="codeNav">
+          <button class="code-nav-btn active" data-cb="1">
+            <span class="t">① 线性投影与拆头（GQA 非对称投影）</span>
+            <span class="d">W_K 和 W_V 输出维度仅为 W_Q 的 1/4（8×128 vs 32×128），从源头砍掉 75% KV 参数与显存。</span>
+          </button>
+          <button class="code-nav-btn" data-cb="2">
+            <span class="t">② QK-Norm 稳压防爆</span>
+            <span class="d">Qwen3 / Gemma / Llama 4 标配：确保点积分数受控，杜绝百层训练出现注意力坍塌或 NaN。</span>
+          </button>
+          <button class="code-nav-btn" data-cb="3">
+            <span class="t">③ RoPE 旋转位置编码</span>
+            <span class="d">仅作用于 Q 和 K，让点积自然只依赖相对距离 (n-m)，不干扰 V 携带的纯语义内容。</span>
+          </button>
+          <button class="code-nav-btn" data-cb="4">
+            <span class="t">④ Transpose 维度腾挪 + KV Cache 更新</span>
+            <span class="d">把 H 移到 L 前面变为并行维；Decode 时 L=1，只把新 1 步的 k, v 写入分页 KV 缓存。</span>
+          </button>
+          <button class="code-nav-btn" data-cb="5">
+            <span class="t">⑤ FlashAttention + enable_gqa=True</span>
+            <span class="d">片上 SRAM 分块计算，绝不落地 L×L 显存；且 4 个 Q 头共享读同一份 KV 显存，无需 repeat 拷贝！</span>
+          </button>
+          <button class="code-nav-btn" data-cb="6">
+            <span class="t">⑥ 合并多头 + W_O 跨头融合</span>
+            <span class="d">将 32 个独立子空间的成果拼回 4096 维，乘上 W_O 充分交互后写回残差流主干道。</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    单文件离线交互式图解（多头注意力专题） · 与前两篇《Transformer 架构》及《KV Cache 与解码采样》构成完整三部曲
+  </footer>
+</div>
+
+<script>
+/* =========================================================
+   LAB 1: SINGLE-HEAD VS MULTI-HEAD VISUALIZATION
+   ========================================================= */
+const WHY_TOKENS = ['那只', '贪吃的', '小猫', '跳上', '桌子', '因为', '它', '太饿了'];
+const TARGET_Q = 6; // "它"
+const HEAD_PATTERNS = [
+  { name: 'Head #1 指代头', color: '#38bdf8', weights: [0.06, 0.14, 0.72, 0.02, 0.01, 0.02, 0.03, 0] },
+  { name: 'Head #2 因果头', color: '#34d399', weights: [0.02, 0.02, 0.08, 0.14, 0.05, 0.64, 0.05, 0] },
+  { name: 'Head #3 动作语境头', color: '#a78bfa', weights: [0.02, 0.05, 0.10, 0.48, 0.28, 0.03, 0.04, 0] },
+  { name: 'Head #4 句首锚点头', color: '#fbbf24', weights: [0.58, 0.06, 0.08, 0.03, 0.02, 0.03, 0.20, 0] }
+];
+const SINGLE_WEIGHTS = [0.16, 0.09, 0.26, 0.17, 0.10, 0.15, 0.07, 0];
+
+let whyView = 'multi';
+let activeSubHead = 'all';
+
+function renderWhyMha() {
+  const svg = document.getElementById('whyMhaSvg');
+  const xPos = i => 62 + i * 108;
+  const baseY = 195;
+  const boxW = 78, boxH = 38;
+  const topY = baseY - boxH / 2 - 4;
+  let html = '';
+
+  if (whyView === 'single') {
+    SINGLE_WEIGHTS.forEach((w, k) => {
+      if (k > TARGET_Q) return;
+      const x1 = xPos(TARGET_Q), x2 = xPos(k);
+      if (k === TARGET_Q) {
+        html += `<path d="M ${x1-12} ${topY} C ${x1-20} ${topY-38}, ${x1+20} ${topY-38}, ${x1+12} ${topY}" fill="none" stroke="#94a3b8" stroke-width="2" opacity="0.5"/>`;
+      } else {
+        const midX = (x1 + x2) / 2;
+        const ctrlY = Math.max(24, topY - (TARGET_Q - k) * 26 - 10);
+        const peakY = 0.5 * topY + 0.5 * ctrlY;
+        html += `<path d="M ${x1} ${topY} Q ${midX} ${ctrlY} ${x2} ${topY}" fill="none" stroke="#94a3b8" stroke-width="${Math.max(1.5, w * 14)}" opacity="${Math.min(0.85, w * 2.2 + 0.15)}" stroke-linecap="round"/>`;
+        html += `<rect x="${midX-18}" y="${peakY-9}" width="36" height="17" rx="8" fill="#080c16" stroke="#475569"/>`;
+        html += `<text x="${midX}" y="${peakY+3}" fill="#cbd5e1" font-size="10.5" font-family="monospace" text-anchor="middle">${Math.round(w*100)}%</text>`;
+      }
+    });
+  } else {
+    HEAD_PATTERNS.forEach((h, hIdx) => {
+      if (activeSubHead !== 'all' && Number(activeSubHead) !== hIdx) return;
+      h.weights.forEach((w, k) => {
+        if (k > TARGET_Q || w < 0.12) return;
+        const x1 = xPos(TARGET_Q) + (hIdx - 1.5) * 6;
+        const x2 = xPos(k);
+        if (k === TARGET_Q) {
+          html += `<path d="M ${x1-10} ${topY} C ${x1-18} ${topY-44}, ${x1+18} ${topY-44}, ${x1+10} ${topY}" fill="none" stroke="${h.color}" stroke-width="${Math.max(2, w*10)}" opacity="0.85"/>`;
+          return;
+        }
+        const midX = (x1 + x2) / 2;
+        const ctrlY = Math.max(20, topY - (TARGET_Q - k) * 27 - hIdx * 10);
+        const peakY = 0.5 * topY + 0.5 * ctrlY;
+        html += `<path d="M ${x1} ${topY} Q ${midX} ${ctrlY} ${x2} ${topY}" fill="none" stroke="${h.color}" stroke-width="${Math.max(1.8, w * 10)}" opacity="${activeSubHead === 'all' ? Math.min(0.95, w * 1.4 + 0.15) : 0.95}" stroke-linecap="round"/>`;
+        if (w >= 0.25) {
+          html += `<rect x="${midX-21}" y="${peakY-9}" width="42" height="18" rx="9" fill="#080c16" stroke="${h.color}" stroke-width="1.2"/>`;
+          html += `<text x="${midX}" y="${peakY+3.5}" fill="#fff" font-size="10.5" font-family="monospace" font-weight="700" text-anchor="middle">${Math.round(w*100)}%</text>`;
+        }
+      });
+    });
+  }
+
+  // Draw Tokens
+  WHY_TOKENS.forEach((tok, i) => {
+    const cx = xPos(i);
+    const isQ = i === TARGET_Q;
+    const isFuture = i > TARGET_Q;
+    let fill = '#131c31', stroke = 'rgba(148,163,184,0.3)', tc = '#f1f5f9', sub = '';
+    if (isQ) { fill = 'rgba(251,191,36,0.22)'; stroke = '#fbbf24'; tc = '#fef3c7'; sub = '当前 Query'; }
+    else if (isFuture) { fill = 'rgba(15,23,42,0.45)'; stroke = 'rgba(251,113,133,0.3)'; tc = '#64748b'; sub = '未来已屏蔽'; }
+    else if (whyView === 'multi') {
+      if (i === 2) sub = '主语 72%';
+      if (i === 5) sub = '因果 64%';
+      if (i === 3) sub = '动作 48%';
+      if (i === 0) sub = '句首 58%';
+    } else {
+      sub = `平均 ${Math.round(SINGLE_WEIGHTS[i]*100)}%`;
+    }
+
+    html += `
+      <rect x="${cx-boxW/2}" y="${baseY-boxH/2}" width="${boxW}" height="${boxH}" rx="9" fill="${fill}" stroke="${stroke}" stroke-width="${isQ ? 2.2 : 1.3}"/>
+      <text x="${cx}" y="${baseY+5}" fill="${tc}" font-size="14" font-weight="700" text-anchor="middle">${tok}</text>
+      <text x="${cx}" y="${baseY+35}" fill="${isFuture ? '#fb7185' : (isQ ? '#fbbf24' : '#94a3b8')}" font-size="10.5" font-family="monospace" text-anchor="middle">${sub}</text>
+    `;
+  });
+
+  svg.innerHTML = html;
+
+  const note = document.getElementById('whyMhaNote');
+  if (whyView === 'single') {
+    note.innerHTML = `<strong>单头注意力的困境（权重被强行平均）：</strong>单头只有一套 Softmax，既想看「小猫」又想看「因为」还想看「跳上」，结果每个词只分到 10%~26% 的零碎权重，所有语义信号混成一碗浆糊！`;
+  } else {
+    note.innerHTML = `<strong>多头并行解耦的威力：</strong><span style="color:#38bdf8;">Head #1</span> 死死锁住指代主语「小猫 (72%)」、<span style="color:#34d399;">Head #2</span> 专抓因果连词「因为 (64%)」、<span style="color:#a78bfa;">Head #3</span> 提取动作场景「跳上/桌子」、<span style="color:#fbbf24;">Head #4</span> 锚定句首位置——最后由 <code>W_O</code> 完美融合！`;
+  }
+}
+
+document.querySelectorAll('#headCompareToggle .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#headCompareToggle .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    whyView = btn.dataset.view;
+    document.getElementById('multiHeadFilters').style.display = whyView === 'multi' ? 'flex' : 'none';
+    renderWhyMha();
+  });
+});
+document.querySelectorAll('#subHeadButtons .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#subHeadButtons .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeSubHead = btn.dataset.sh;
+    renderWhyMha();
+  });
+});
+renderWhyMha();
+
+/* =========================================================
+   LAB 2: TENSOR SHAPE EVOLUTION STEPPER (NO FOR-LOOP)
+   ========================================================= */
+let tensorStep = 0;
+const TENSOR_INFO = [
+  {
+    title: 'Step 1：融合线性投影（1 次大 GEMM，而非 32 次小循环）',
+    desc: '输入 <code>X [2, 1024, 4096]</code> 直接与合并后的大权重矩阵 <code>W_QKV</code> 做一次大矩阵乘法，充分利用 GPU Tensor Core 算力，得到形状均为 <code>[2, 1024, 4096]</code> 的 Q、K、V。',
+    svg: `
+      <rect x="30" y="65" width="150" height="96" rx="10" fill="rgba(56,189,248,0.16)" stroke="#38bdf8" stroke-width="2"/>
+      <text x="105" y="106" fill="#fff" font-size="14" font-weight="700" text-anchor="middle">输入 X</text>
+      <text x="105" y="128" fill="#7dd3fc" font-size="12" font-family="monospace" text-anchor="middle">[B=2, L=1024, D=4096]</text>
+      <text x="225" y="118" fill="#94a3b8" font-size="18" font-weight="700" text-anchor="middle">× W_QKV →</text>
+      <rect x="290" y="25" width="175" height="52" rx="9" fill="rgba(251,191,36,0.18)" stroke="#fbbf24" stroke-width="1.8"/>
+      <text x="377" y="48" fill="#fef3c7" font-size="13" font-weight="700" text-anchor="middle">Q  [2, 1024, 4096]</text>
+      <text x="377" y="65" fill="#fbbf24" font-size="10.5" text-anchor="middle">此时 32 个头还连成一整条 4096</text>
+      <rect x="290" y="88" width="175" height="52" rx="9" fill="rgba(52,211,153,0.18)" stroke="#34d399" stroke-width="1.8"/>
+      <text x="377" y="111" fill="#d1fae5" font-size="13" font-weight="700" text-anchor="middle">K  [2, 1024, 4096]</text>
+      <text x="377" y="128" fill="#34d399" font-size="10.5" text-anchor="middle">（GQA 中此处更窄，如 8×128）</text>
+      <rect x="290" y="151" width="175" height="52" rx="9" fill="rgba(167,139,250,0.18)" stroke="#a78bfa" stroke-width="1.8"/>
+      <text x="377" y="174" fill="#ede9fe" font-size="13" font-weight="700" text-anchor="middle">V  [2, 1024, 4096]</text>
+      <text x="377" y="191" fill="#a78bfa" font-size="10.5" text-anchor="middle">仅一次大 GEMM 全部产出</text>
+      <rect x="520" y="62" width="320" height="104" rx="11" fill="rgba(52,211,153,0.08)" stroke="rgba(52,211,153,0.35)"/>
+      <text x="680" y="92" fill="#34d399" font-size="13" font-weight="700" text-anchor="middle">为什么不写 32 个 nn.Linear 循环？</text>
+      <text x="680" y="116" fill="#cbd5e1" font-size="12" text-anchor="middle">32 次小矩阵乘会触发 32 次 GPU Kernel 启动，</text>
+      <text x="680" y="136" fill="#cbd5e1" font-size="12" text-anchor="middle">算力严重空转；合成 1 次大矩阵乘可跑满 Tensor Core！</text>
+    `
+  },
+  {
+    title: 'Step 2：view / reshape 零拷贝逻辑拆头（4096 → 32 × 128）',
+    desc: '在显存里<strong>完全不挪动任何字节</strong>，仅修改张量的元数据步长（Stride），把最后一维 <code>4096</code> 逻辑切分成 <code>32 个头 × 每头 128 维</code> → <code>[2, 1024, 32, 128]</code>。（现代架构紧接着在此施加 <strong>QK-Norm 与 RoPE</strong>！）',
+    svg: `
+      <rect x="40" y="68" width="230" height="84" rx="10" fill="rgba(251,191,36,0.16)" stroke="#fbbf24" stroke-width="1.8"/>
+      <text x="155" y="102" fill="#fef3c7" font-size="14" font-weight="700" text-anchor="middle">整块特征维度 D = 4096</text>
+      <text x="155" y="126" fill="#fbbf24" font-size="12" font-family="monospace" text-anchor="middle">[B=2, L=1024, 4096]</text>
+      <text x="330" y="116" fill="#38bdf8" font-size="14" font-weight="800" text-anchor="middle">view() 零拷贝 →</text>
+      <g transform="translate(405, 52)">
+        <rect x="0" y="0" width="90" height="114" rx="8" fill="rgba(56,189,248,0.2)" stroke="#38bdf8" stroke-width="1.8"/>
+        <text x="45" y="48" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">Head #1</text>
+        <text x="45" y="70" fill="#7dd3fc" font-size="11" font-family="monospace" text-anchor="middle">128 维</text>
+        <rect x="102" y="0" width="90" height="114" rx="8" fill="rgba(52,211,153,0.2)" stroke="#34d399" stroke-width="1.8"/>
+        <text x="147" y="48" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">Head #2</text>
+        <text x="147" y="70" fill="#a7f3d0" font-size="11" font-family="monospace" text-anchor="middle">128 维</text>
+        <text x="234" y="62" fill="#94a3b8" font-size="20" font-weight="800" text-anchor="middle">…</text>
+        <rect x="274" y="0" width="96" height="114" rx="8" fill="rgba(167,139,250,0.2)" stroke="#a78bfa" stroke-width="1.8"/>
+        <text x="322" y="48" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">Head #32</text>
+        <text x="322" y="70" fill="#ddd6fe" font-size="11" font-family="monospace" text-anchor="middle">128 维</text>
+        <text x="185" y="142" fill="#38bdf8" font-size="12.5" font-family="monospace" font-weight="700" text-anchor="middle">新形状: [B=2, L=1024, H=32, d_head=128]</text>
+      </g>
+    `
+  },
+  {
+    title: 'Step 3：transpose(1, 2) 关键维度腾挪（把头数 H 变成并行 Batch 维！）',
+    desc: '这是最神来之笔的一行代码：把维度 <code>L=1024</code> 和 <code>H=32</code> 互换，变成 <code>[B=2, H=32, L=1024, 128]</code>。这样 GPU 看到的就是 <strong>2 × 32 = 64 个完全独立的 <code>[1024 × 128]</code> 小矩阵</strong>，一次 Batched MatMul 全部齐发！',
+    svg: `
+      <rect x="40" y="64" width="275" height="90" rx="11" fill="rgba(148,163,184,0.1)" stroke="rgba(148,163,184,0.4)"/>
+      <text x="177" y="96" fill="#cbd5e1" font-size="13" font-family="monospace" font-weight="700" text-anchor="middle">[ B=2,  L=1024,  H=32,  128 ]</text>
+      <text x="177" y="124" fill="#94a3b8" font-size="11.5" text-anchor="middle">第 1 维是 L，第 2 维是 H</text>
+      <path d="M 155 72 Q 195 36 235 72" fill="none" stroke="#fbbf24" stroke-width="2.2"/>
+      <text x="195" y="48" fill="#fbbf24" font-size="11.5" font-weight="700" text-anchor="middle">交换第 1、2 维</text>
+
+      <text x="368" y="114" fill="#38bdf8" font-size="14" font-weight="800" text-anchor="middle">transpose →</text>
+
+      <rect x="424" y="42" width="420" height="140" rx="12" fill="rgba(56,189,248,0.12)" stroke="#38bdf8" stroke-width="2"/>
+      <text x="634" y="76" fill="#fff" font-size="15" font-family="monospace" font-weight="800" text-anchor="middle">[ (B=2, H=32),   L=1024,   128 ]</text>
+      <rect x="454" y="92" width="150" height="32" rx="7" fill="rgba(52,211,153,0.22)" stroke="#34d399"/>
+      <text x="529" y="113" fill="#d1fae5" font-size="12" font-weight="700" text-anchor="middle">64 路彻底并行维度</text>
+      <rect x="620" y="92" width="194" height="32" rx="7" fill="rgba(167,139,250,0.22)" stroke="#a78bfa"/>
+      <text x="717" y="113" fill="#ede9fe" font-size="12" font-weight="700" text-anchor="middle">每个头独立的 [L × 128] 矩阵</text>
+      <text x="634" y="156" fill="#94a3b8" font-size="12" text-anchor="middle">此后直接调用一次 FlashAttention，64 份矩阵在 GPU 上全速并发！</text>
+    `
+  },
+  {
+    title: 'Step 4：64 路全并行缩放点积注意力（FlashAttention 核心区）',
+    desc: '对全部 <code>B×H = 64</code> 个独立头同步执行 <code>softmax(Q·Kᵀ / √128 + Mask) · V</code>。现代框架（如 FlashAttention）在 GPU 片上 SRAM 内分块完成，绝不在显存中真正落地 <code>[2, 32, 1024, 1024]</code> 大矩阵！',
+    svg: `
+      <rect x="30" y="56" width="175" height="96" rx="10" fill="rgba(251,191,36,0.16)" stroke="#fbbf24" stroke-width="1.8"/>
+      <text x="117" y="95" fill="#fef3c7" font-size="13.5" font-weight="700" text-anchor="middle">Q @ Kᵀ / √128</text>
+      <text x="117" y="120" fill="#fbbf24" font-size="11.5" font-family="monospace" text-anchor="middle">[2, 32, 1024, 1024]</text>
+      <text x="117" y="140" fill="#94a3b8" font-size="10.5" text-anchor="middle">(片上分块，不落 HBM)</text>
+
+      <text x="242" y="110" fill="#94a3b8" font-size="16" font-weight="700" text-anchor="middle">→ Mask →</text>
+
+      <rect x="285" y="56" width="180" height="96" rx="10" fill="rgba(56,189,248,0.16)" stroke="#38bdf8" stroke-width="1.8"/>
+      <text x="375" y="95" fill="#e0f2fe" font-size="13.5" font-weight="700" text-anchor="middle">Online Softmax</text>
+      <text x="375" y="120" fill="#7dd3fc" font-size="11.5" font-family="monospace" text-anchor="middle">每头独立权重矩阵</text>
+      <text x="375" y="140" fill="#94a3b8" font-size="10.5" text-anchor="middle">互不干扰，各看各的焦点</text>
+
+      <text x="502" y="110" fill="#94a3b8" font-size="18" font-weight="700" text-anchor="middle">× V →</text>
+
+      <rect x="540" y="56" width="305" height="96" rx="10" fill="rgba(52,211,153,0.18)" stroke="#34d399" stroke-width="2"/>
+      <text x="692" y="95" fill="#fff" font-size="14" font-weight="800" text-anchor="middle">各头聚合输出 Out</text>
+      <text x="692" y="120" fill="#a7f3d0" font-size="12.5" font-family="monospace" font-weight="700" text-anchor="middle">[B=2, H=32, L=1024, d_head=128]</text>
+      <text x="692" y="140" fill="#34d399" font-size="11" text-anchor="middle">32 份独立洞察报告全部出炉 ✓</text>
+    `
+  },
+  {
+    title: 'Step 5：反向转置 + Concat 合并多头（还原回 [2, 1024, 4096]）',
+    desc: '把 <code>H=32</code> 和 <code>L=1024</code> 换回原位（<code>[2, 1024, 32, 128]</code>），再调用 <code>contiguous().view(B, L, 4096)</code> 将 32 个 128 维向量首尾拼接还原成 4096 维长向量。注意：此时 32 个头只是物理拼在一起，尚未化学融合！',
+    svg: `
+      <g transform="translate(36, 48)">
+        <rect x="0" y="0" width="84" height="106" rx="8" fill="rgba(56,189,248,0.2)" stroke="#38bdf8"/>
+        <text x="42" y="56" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">Out #1</text>
+        <rect x="92" y="0" width="84" height="106" rx="8" fill="rgba(52,211,153,0.2)" stroke="#34d399"/>
+        <text x="134" y="56" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">Out #2</text>
+        <text x="208" y="60" fill="#94a3b8" font-size="18" font-weight="800" text-anchor="middle">…</text>
+        <rect x="236" y="0" width="88" height="106" rx="8" fill="rgba(167,139,250,0.2)" stroke="#a78bfa"/>
+        <text x="280" y="56" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">Out #32</text>
+      </g>
+      <text x="430" y="108" fill="#fbbf24" font-size="13.5" font-weight="800" text-anchor="middle">transpose + view →</text>
+      <rect x="515" y="54" width="330" height="96" rx="11" fill="rgba(167,139,250,0.16)" stroke="#a78bfa" stroke-width="2"/>
+      <text x="680" y="92" fill="#fff" font-size="14" font-weight="700" text-anchor="middle">Concat 拼接后的输出 o</text>
+      <text x="680" y="116" fill="#ddd6fe" font-size="12.5" font-family="monospace" font-weight="700" text-anchor="middle">[B=2, L=1024, D=4096]</text>
+      <text x="680" y="138" fill="#fbbf24" font-size="11" text-anchor="middle">⚠️ 32 个头仅物理并排，急需下一步 W_O 混合！</text>
+    `
+  },
+  {
+    title: 'Step 6：乘以输出投影矩阵 W_O（跨头融合 + 对齐残差流）',
+    desc: '将拼接后的 4096 维向量乘以 <code>W_O [4096, 4096]</code>。这一步让 32 个头的信息发生真正的全局线性交互，并映射回残差流主干道，准备做 <code>h\' = x + AttnOut</code> 残差相加！',
+    svg: `
+      <rect x="40" y="62" width="220" height="92" rx="10" fill="rgba(167,139,250,0.16)" stroke="#a78bfa" stroke-width="1.8"/>
+      <text x="150" y="98" fill="#ede9fe" font-size="13.5" font-weight="700" text-anchor="middle">Concat(o₁…o₃₂)</text>
+      <text x="150" y="122" fill="#c4b5fd" font-size="12" font-family="monospace" text-anchor="middle">[2, 1024, 4096]</text>
+
+      <text x="305" y="114" fill="#94a3b8" font-size="20" font-weight="800" text-anchor="middle">×</text>
+
+      <rect x="345" y="50" width="160" height="116" rx="10" fill="rgba(251,191,36,0.18)" stroke="#fbbf24" stroke-width="2"/>
+      <text x="425" y="95" fill="#fef3c7" font-size="15" font-weight="800" text-anchor="middle">W_O</text>
+      <text x="425" y="118" fill="#fbbf24" font-size="12" font-family="monospace" text-anchor="middle">[4096 × 4096]</text>
+      <text x="425" y="142" fill="#fde68a" font-size="11" text-anchor="middle">跨头混合器</text>
+
+      <text x="548" y="114" fill="#34d399" font-size="22" font-weight="800" text-anchor="middle">=</text>
+
+      <rect x="588" y="62" width="256" height="92" rx="10" fill="rgba(52,211,153,0.2)" stroke="#34d399" stroke-width="2.2"/>
+      <text x="716" y="96" fill="#fff" font-size="14" font-weight="800" text-anchor="middle">最终 AttnOut</text>
+      <text x="716" y="120" fill="#a7f3d0" font-size="12.5" font-family="monospace" font-weight="700" text-anchor="middle">[2, 1024, 4096]</text>
+      <text x="716" y="141" fill="#34d399" font-size="11" text-anchor="middle">写入残差流：h' = x + AttnOut ✓</text>
+    `
+  }
+];
+
+function renderTensorStep() {
+  const info = TENSOR_INFO[tensorStep];
+  document.querySelectorAll('#tensorStepper .t-step').forEach((el, i) => {
+    el.classList.toggle('active', i === tensorStep);
+  });
+  document.getElementById('tensorSvg').innerHTML = info.svg;
+  document.getElementById('tensorExplain').innerHTML = `<strong>${info.title}</strong><br/>${info.desc}`;
+  document.getElementById('btnTensorPrev').disabled = tensorStep === 0;
+  document.getElementById('btnTensorNext').disabled = tensorStep === TENSOR_INFO.length - 1;
+}
+
+document.querySelectorAll('#tensorStepper .t-step').forEach(el => {
+  el.addEventListener('click', () => { tensorStep = Number(el.dataset.t); renderTensorStep(); });
+});
+document.getElementById('btnTensorPrev').addEventListener('click', () => { if (tensorStep > 0) { tensorStep--; renderTensorStep(); } });
+document.getElementById('btnTensorNext').addEventListener('click', () => { if (tensorStep < TENSOR_INFO.length - 1) { tensorStep++; renderTensorStep(); } });
+renderTensorStep();
+
+/* =========================================================
+   LAB 3: MHA -> MQA -> GQA -> MLA + LIVE VRAM CALCULATOR
+   ========================================================= */
+let selectedEvo = 'gqa';
+let ctxLenK = 32; // in K tokens (4..128)
+
+// Exact KV Cache GB formula for 70B-class model: 80 layers, H_q=64, d_head=128 (d_model=8192), FP16 (2 bytes)
+// 1K = 1024 tokens; 1 GB = 1024^3 bytes
+const EVO_SPECS = {
+  mha: {
+    name: 'MHA（标准多头 64:64）',
+    short: 'MHA',
+    color: '#fb7185',
+    bytesPerTok: 2 * 80 * 64 * 128 * 2, // 2.5 MB/tok -> 80 GB @ 32K
+    ratio: '1× 基准',
+    desc: '<strong>2017 原版 / GPT-3 / Llama 1：</strong>64 个 Q 头配 64 个独立 K 头和 64 个 V 头。精度最高，但单条 32K 对话就要吃满整张 <stron

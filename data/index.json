@@ -1,16 +1,20 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-26T06:55:38Z",
-  "totalCount": 2,
+  "generatedAt": "2026-11-26T07:30:15Z",
+  "totalCount": 3,
   "categories": [
     {
       "name": "核心架构",
-      "count": 2
+      "count": 3
     }
   ],
   "tags": [
     {
       "name": "KV Cache",
+      "count": 3
+    },
+    {
+      "name": "大模型",
       "count": 2
     },
     {
@@ -18,11 +22,23 @@
       "count": 2
     },
     {
-      "name": "大模型",
+      "name": "Transformer",
       "count": 2
     },
     {
       "name": "Embedding",
+      "count": 1
+    },
+    {
+      "name": "FlashAttention",
+      "count": 1
+    },
+    {
+      "name": "GQA",
+      "count": 1
+    },
+    {
+      "name": "MLA",
       "count": 1
     },
     {
@@ -34,19 +50,51 @@
       "count": 1
     },
     {
+      "name": "RoPE",
+      "count": 1
+    },
+    {
       "name": "Self-Attention",
       "count": 1
     },
     {
       "name": "SwiGLU",
       "count": 1
-    },
-    {
-      "name": "Transformer",
-      "count": 1
     }
   ],
   "articles": [
+    {
+      "id": "mha",
+      "slug": "mha",
+      "filename": "mha.html",
+      "path": "articles/mha.html",
+      "title": "深入图解多头注意力机制（MHA）及现代 Transformer 工业实现",
+      "category": "核心架构",
+      "tags": [
+        "GQA",
+        "Transformer",
+        "MLA",
+        "FlashAttention",
+        "RoPE",
+        "KV Cache"
+      ],
+      "summary": "从“为什么必须拆成多头”与零循环张量变形出发，直击今天 Llama / Qwen / DeepSeek 等前沿大模型的核心底牌：GQA/MLA 显存瘦身、RoPE 旋转位置编码、QK-Norm 稳压、FlashAttention 分块算子与百万上下文混合架构。",
+      "headings": [
+        "多头注意力机制原理与现代 Transformer 五大工业级实现",
+        "为什么一定要“多头”？（单头瓶颈与“免费红利”）",
+        "底层张量怎么算？（告别 for 循环：维度腾挪并行术）",
+        "现代魔改 ①：KV Cache 显存瘦身革命（MHA → MQA → GQA → MLA）",
+        "现代魔改 ②~⑤：RoPE 旋转编码、FlashAttention 与 QK-Norm / 混合架构",
+        "实战代码透视：现代 GQA 多头注意力逐段解析"
+      ],
+      "content": "多头注意力机制 · 原理与现代实现图解 01 为何需要多头 02 零循环张量并行 03 MHA→GQA→MLA 04 RoPE / FlashAttn / QK-Norm 05 现代源码透视 交互式可视化教学指南 · 多头注意力（Multi-Head Attention）全解 多头注意力机制原理 与现代 Transformer 五大工业级实现 从“为什么必须拆成多头”与零循环张量变形出发，直击今天 Llama / Qwen / DeepSeek 等前沿大模型的核心底牌：GQA/MLA 显存瘦身、RoPE 旋转位置编码、QK-Norm 稳压、FlashAttention 分块算子与百万上下文混合架构。 零额外 FLOPs 红利 Reshape + Transpose 并行 GQA & DeepSeek MLA RoPE 相对旋转 FlashAttention O(L) 显存 01 为什么一定要“多头”？（单头瓶颈与“免费红利”） 面对同一个词（例如句子里的代词「它」），模型需要同时捕捉指代主语、因果逻辑、动作语境等多种关联。单头只有一套 Softmax 权重，被迫把不同需求“糊成一团平均掉”；拆成多头后，每个头独立拥有一双不同焦点的眼睛。 交互实验 1：单头视角冲突 vs. 多头并行解耦 当前查询词：「它」 切换“单头模式”和“4 头并行模式”，对比注意力分布清晰度！在多头模式下可单独高亮某一个头。 单头注意力（视角混杂） 多头注意力（4 个头各司其职） 查看指定注意力头： 全部 4 头叠加 Head #1 指代头 Head #2 因果头 Head #3 动作语境头 Head #4 句首锚点头 总参数量对比（d=4096） 4d² ＝ 4d² 32 个 128 维小头总参数 ＝ 1 个 4096 维大头 QKᵀ 与 AV 矩阵乘 FLOPs L²d ＝ L²d H × (L² × d/H) ＝ L²d，计算量完全一致！ 表达子空间数量 1 → 32 ~ 128 倍 几乎“零额外矩阵成本”换来数十双并行眼睛 02 底层张量怎么算？（告别 for 循环：维度腾挪并行术） 真实 GPU 代码绝不写 for i in range(32): 逐头循环，而是把 32 个头合并成一次大矩阵乘，再靠 reshape 拆头 + transpose 把头数提到序列长度前面，直接交给 GPU 一次性批量矩阵乘（Batched MatMul）。 交互实验 2：张量形状 6 步演化模拟器 以 B=2, L=1024, d=4096, H=32 为例 ← 上一步 下一步 → STEP 1 融合投影 QKV [2, 1024, 4096] STEP 2 Reshape 拆头 [2, 1024, 32, 128] STEP 3 Transpose 并行 [2, 32, 1024, 128] STEP 4 批量注意力 [2, 32, 1024, 128] STEP 5 合并还原形状 [2, 1024, 4096] STEP 6 W_O 跨头混合 [2, 1024, 4096] 03 现代魔改 ①：KV Cache 显存瘦身革命（MHA → MQA → GQA → MLA） 标准 MHA 在长上下文 Decode 时会把 GPU 显存和显存带宽彻底吃干抹净。点击切换四大现代多头变体，并拖动右侧上下文长度滑块，直击单条请求如何瞬间撑爆 80GB H100，以及 GQA 和 DeepSeek MLA 是如何破局的。 MHA（经典 1对1） MQA（全共享 1 组） GQA（分组共享 · 最普及） MLA（DeepSeek 潜空间压缩） 以 70B 级模型（80层 / d=8192 / 64头 / FP16）单请求测算 实时 KV Cache 显存计算器 L = 32K tokens 4K32K64K96K128K 红线 = 单张 H100 (80 GB) 显存极限（注意：还不算模型权重本身！） 04 现代魔改 ②~⑤：RoPE 旋转编码、FlashAttention 与 QK-Norm / 混合架构 把这四项现代工程黑科技叠加在多头注意力上，才构成了今天能跑 128K~1M 上下文、训练百层不炸梯度的完整现代注意力引擎。切换下方三个交互实验逐一体验。 实验 A：RoPE 旋转位置编码 实验 B：FlashAttention SRAM 分块动画 实验 C：QK-Norm 稳压 & 百万上下文混合层 亲手验证 RoPE 的相对位置魔力 RoPE 把每个头的向量两两分组，按 Token 所在位置 m, n 分别旋转角度 m·θ 和 n·θ。试试点击下方“同步平移”按钮：两根向量一起转动，但夹角和点积分数纹丝不动！ Query 位置 m m = 5 Key 位置 n n = 2 ↻ 同步平移 m+2, n+2（距离不变） 重置 进阶备注（MLA 的 Decoupled RoPE）：由于 RoPE 夹在 Q、K 中间会妨碍低秩矩阵吸收，DeepSeek MLA 为每个头单独辟出 64 维专带 RoPE 的“位置子头”，完美鱼与熊掌兼得！ FlashAttention 核心思想：绝不在慢速显存（HBM）中分配巨大的 L×L 注意力矩阵！ 把 Q, K, V 切成小块流式搬入极高速 GPU 片上 SRAM，边读块边用 Online Softmax 动态更新结果 O。 单步执行 Tile ▶ 自动播放 重置 FlashAttention 分块执行图（因果跳过右上 6 块） 显存 O(L) · 提速 2~4× 对比：传统实现为何会在长文本炸显存？ 显存 O(L²) · HBM 瓶颈 按标准代码写 S = Q @ K.T; P = softmax(S); O = P @ V 时，GPU 必须把庞大的 S 和 P（形状 [B, H, L, L]）完整写回慢速 HBM 显存，再读回算 Softmax，再写回 HBM，再读回乘 V！ 当 L = 128K, H = 32, FP16 时： 单个 L×L 矩阵 = 32 × 131072² × 2B ≈ 1,024 GB（当场 OOM!） 推理端双翼加持： • PagedAttention (vLLM)：像操作系统虚拟内存分页管理 KV Cache，消灭显存碎片； • FlashDecoding：Decode 时沿历史长度 L 切块并行，让 1 个新词也能喂满整张 GPU！ 魔改 ③：QK-Norm（深层防爆稳压器） 开启 QK-Norm（现代标配） 关闭（深层 Logits 爆炸） 在 Qwen3、Gemma 2/3/4、Llama 4 中，拆头后、做 RoPE 前，对每个头的 Q 和 K 独立做一次 RMSNorm，把点积分数锁在安全区。 魔改 ⑤：2025–2026 百万上下文混合注意力堆叠 兼顾速度与全局回忆 即便 FlashAttention 解决了显存，全注意力的 O(L²) 计算量在 1M 窗口依然沉重。现代旗舰（Qwen3.5/4、Gemma 4、DeepSeek DSA、MiniMax）采用异构层交替堆叠： L1 局部/线性 L2 局部/线性 L3 局部/线性 L4 全局 Full L5 局部/线性 L6 局部/线性 L7 局部/线性 L8 全局 Full 3:1 黄金配比（或动态块稀疏 DSA/NSA）： • 75% 高速层（滑动窗口 SWA 或 Gated DeltaNet / Lightning 线性注意力）：复杂度 O(L)，KV 状态恒定极省显存； • 25% 全局层（Full GQA / MLA）：负责跨数十万 Token 的精准“大海捞针”检索！ 05 实战代码透视：现代 GQA 多头注意力逐段解析 点击右侧任意工程模块（或直接点击左侧代码块），高亮定位真实 PyTorch 代码行，将前面所有原理与工程细节一网打尽。 class ModernGQAAttention(nn.Module): # Q 有 32 头，K/V 仅 8 头（每 4 个 Q 共享 1 组 KV，显存降 4×） def forward(self, x, freqs_cis, kv_cache=None): B, L, D = x.shape # 1. 线性投影 + reshape 拆头 -> [B, L, H, head_dim] q = self.w_q(x).view(B, L, 32, 128) k = self.w_k(x).view(B, L, 8, 128) v = self.w_v(x).view(B, L, 8, 128) # 2. QK-Norm：在 head_dim 上做 RMSNorm，防止深层点数爆炸 q = self.q_norm(q) k = self.k_norm(k) # 3. RoPE：只旋转 Q 和 K 注入相对位置，V 保持纯内容不变 q, k = apply_rope(q, k, freqs_cis) # 4. 转置把头数提到 L 前面 -> [B, H, L, 128]，并更新本层 KV Cache q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) if kv_cache is not None: k, v = kv_cache.update(k, v) # PagedAttention 原地追加 # 5. 底层直通 FlashAttention（原生零拷贝 GQA + 在线分块 Softmax） out = F.scaled_dot_product_attention( q, k, v, is_causal=(L > 1), enable_gqa=True ) # 输出形状: [B, 32, L, 128] # 6. 反向转置合并多头 -> [B, L, 4096]，过 W_O 跨头混合！ out = out.transpose(1, 2).contiguous().view(B, L, D) return self.w_o(out) ① 线性投影与拆头（GQA 非对称投影） W_K 和 W_V 输出维度仅为 W_Q 的 1/4（8×128 vs 32×128），从源头砍掉 75% KV 参数与显存。 ② QK-Norm 稳压防爆 Qwen3 / Gemma / Llama 4 标配：确保点积分数受控，杜绝百层训练出现注意力坍塌或 NaN。 ③ RoPE 旋转位置编码 仅作用于 Q 和 K，让点积自然只依赖相对距离 (n-m)，不干扰 V 携带的纯语义内容。 ④ Transpose 维度腾挪 + KV Cache 更新 把 H 移到 L 前面变为并行维；Decode 时 L=1，只把新 1 步的 k, v 写入分页 KV 缓存。 ⑤ FlashAttention + enable_gqa=True 片上 SRAM 分块计算，绝不落地 L×L 显存；且 4 个 Q 头共享读同一份 KV 显存，无需 repeat 拷贝！ ⑥ 合并多头 + W_O 跨头融合 将 32 个独立子空间的成果拼回 4096 维，乘上 W_O 充分交互后写回残差流主干道。 单文件离线交互式图解（多头注意力专题） · 与前两篇《Transformer 架构》及《KV Cache 与解码采样》构成完整三部曲",
+      "wordCount": 2172,
+      "readingTime": 6,
+      "sizeBytes": 61764,
+      "createdAt": "2026-11-26T07:30:13Z",
+      "updatedAt": "2026-11-26T07:30:14Z",
+      "contentHash": "80572bf057cb"
+    },
     {
       "id": "kv_cache",
       "slug": "kv_cache",
