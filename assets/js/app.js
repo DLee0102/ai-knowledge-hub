@@ -2,15 +2,15 @@
  * AI Knowledge Hub — Main Application Controller
  */
 
-import { storage } from "./storage.js?v=20261126-2";
+import { storage } from "./storage.js?v=20261126-3";
 import {
   parseHtmlArticle,
   injectMetadataIntoHtml,
   buildIndexPayload,
   sanitizeFilename,
   parseTagsString,
-} from "./parser.js?v=20261126-2";
-import { searchAndFilterArticles, escapeHtml } from "./search.js?v=20261126-2";
+} from "./parser.js?v=20261126-3";
+import { searchAndFilterArticles, escapeHtml } from "./search.js?v=20261126-3";
 import {
   detectRepoFromContext,
   isConfigured,
@@ -22,7 +22,7 @@ import {
   rebuildRemoteIndex,
   encodeRepoPath,
   getGitHubFileUrl,
-} from "./github-api.js?v=20261126-2";
+} from "./github-api.js?v=20261126-3";
 import {
   getCategoryColor,
   formatDate,
@@ -37,7 +37,7 @@ import {
   renderUploadQueue,
   highlightInIframe,
   scrollIframeToHeading,
-} from "./ui.js?v=20261126-2";
+} from "./ui.js?v=20261126-3";
 
 // ============================================================================
 // Application State
@@ -67,6 +67,7 @@ const state = {
   query: "",
   sortBy: storage.getSortBy(),
   viewMode: storage.getViewMode(),
+  sidebarCollapsed: storage.getSidebarCollapsed(),
 
   activeArticleId: null,
   activeBlobUrl: null,
@@ -89,6 +90,7 @@ const state = {
 
 async function init() {
   applyTheme(storage.getTheme());
+  syncSidebarUI();
   bindEvents();
 
   await loadSiteConfig();
@@ -466,10 +468,12 @@ async function openArticleReader(id) {
   state.readerMarks = [];
   state.readerMarkIdx = -1;
 
+  openMobileSidebar(false);
   document.getElementById("libraryView").classList.add("hidden");
   const readerView = document.getElementById("readerView");
   readerView.classList.remove("hidden");
   readerView.classList.remove("fullscreen");
+  syncSidebarUI();
 
   // Header metadata
   const color = getCategoryColor(article.category, state.siteConfig);
@@ -577,6 +581,7 @@ function closeArticleReader(updateHash = true) {
   readerView.classList.add("hidden");
   readerView.classList.remove("fullscreen");
   document.getElementById("libraryView").classList.remove("hidden");
+  syncSidebarUI();
   if (updateHash) navigateHome();
 }
 
@@ -1492,9 +1497,81 @@ function closeModal(id) {
   }
 }
 
+const MOBILE_SIDEBAR_MQ =
+  typeof window !== "undefined" && window.matchMedia
+    ? window.matchMedia("(max-width: 960px)")
+    : null;
+
+function isMobileViewport() {
+  return MOBILE_SIDEBAR_MQ ? MOBILE_SIDEBAR_MQ.matches : false;
+}
+
+function syncSidebarUI() {
+  const sidebar = document.getElementById("sidebar");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  const menuBtn = document.getElementById("mobileMenuBtn");
+  if (!sidebar || !backdrop || !menuBtn) return;
+
+  if (isMobileViewport()) {
+    sidebar.classList.remove("collapsed");
+    const isOpen = sidebar.classList.contains("open") && !state.activeArticleId;
+    sidebar.classList.toggle("open", isOpen);
+    backdrop.classList.toggle("open", isOpen);
+    menuBtn.setAttribute("aria-expanded", String(isOpen));
+    menuBtn.title = state.activeArticleId
+      ? "返回列表并打开导航菜单"
+      : isOpen
+        ? "收起导航菜单"
+        : "打开导航菜单";
+  } else {
+    sidebar.classList.remove("open");
+    backdrop.classList.remove("open");
+    sidebar.classList.toggle("collapsed", state.sidebarCollapsed);
+    const isExpanded = !state.sidebarCollapsed && !state.activeArticleId;
+    menuBtn.setAttribute("aria-expanded", String(isExpanded));
+    menuBtn.title = state.activeArticleId
+      ? "返回列表并展开导航侧边栏"
+      : state.sidebarCollapsed
+        ? "展开导航侧边栏"
+        : "收起导航侧边栏";
+  }
+}
+
+function setDesktopSidebarCollapsed(collapsed) {
+  state.sidebarCollapsed = Boolean(collapsed);
+  storage.setSidebarCollapsed(state.sidebarCollapsed);
+  syncSidebarUI();
+}
+
 function openMobileSidebar(open) {
-  document.getElementById("sidebar").classList.toggle("open", open);
-  document.getElementById("sidebarBackdrop").classList.toggle("open", open);
+  const sidebar = document.getElementById("sidebar");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  if (!sidebar || !backdrop) return;
+  sidebar.classList.toggle("open", Boolean(open));
+  backdrop.classList.toggle("open", Boolean(open));
+  syncSidebarUI();
+}
+
+function toggleNavigationSidebar() {
+  if (state.activeArticleId) {
+    closeArticleReader(false);
+    if (window.location.hash && window.location.hash !== "#/") {
+      window.location.hash = "#/";
+    }
+    if (isMobileViewport()) {
+      openMobileSidebar(true);
+    } else {
+      setDesktopSidebarCollapsed(false);
+    }
+    return;
+  }
+
+  if (isMobileViewport()) {
+    const isOpen = document.getElementById("sidebar").classList.contains("open");
+    openMobileSidebar(!isOpen);
+  } else {
+    setDesktopSidebarCollapsed(!state.sidebarCollapsed);
+  }
 }
 
 // ============================================================================
@@ -1504,12 +1581,17 @@ function openMobileSidebar(open) {
 function bindEvents() {
   window.addEventListener("hashchange", handleHashRoute);
 
-  // Mobile sidebar
-  document.getElementById("mobileMenuBtn").addEventListener("click", () => {
-    const isOpen = document.getElementById("sidebar").classList.contains("open");
-    openMobileSidebar(!isOpen);
-  });
+  // Navigation sidebar toggle (desktop collapse + mobile drawer)
+  document.getElementById("mobileMenuBtn").addEventListener("click", toggleNavigationSidebar);
   document.getElementById("sidebarBackdrop").addEventListener("click", () => openMobileSidebar(false));
+  if (MOBILE_SIDEBAR_MQ) {
+    const onViewportChange = () => syncSidebarUI();
+    if (typeof MOBILE_SIDEBAR_MQ.addEventListener === "function") {
+      MOBILE_SIDEBAR_MQ.addEventListener("change", onViewportChange);
+    } else if (typeof MOBILE_SIDEBAR_MQ.addListener === "function") {
+      MOBILE_SIDEBAR_MQ.addListener(onViewportChange);
+    }
+  }
 
   // Brand home
   document.getElementById("brandHome").addEventListener("click", (e) => {
@@ -1947,6 +2029,10 @@ function bindEvents() {
       const openModals = Array.from(document.querySelectorAll(".modal-overlay:not(.hidden)"));
       if (openModals.length) {
         closeModal(openModals[openModals.length - 1].id);
+        return;
+      }
+      if (document.getElementById("sidebar")?.classList.contains("open")) {
+        openMobileSidebar(false);
         return;
       }
       if (state.activeArticleId) {

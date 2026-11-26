@@ -11,6 +11,7 @@ const LS_KEYS = {
   VIEW_MODE: "akh_view_mode",
   TAG_MODE: "akh_tag_mode",
   SORT_BY: "akh_sort_by",
+  SIDEBAR_COLLAPSED: "akh_sidebar_collapsed",
 };
 
 const IDB_NAME = "ai_knowledge_hub_db";
@@ -120,6 +121,13 @@ export const storage = {
   },
   setSortBy(sortBy) {
     writeLS(LS_KEYS.SORT_BY, sortBy);
+  },
+
+  getSidebarCollapsed() {
+    return Boolean(readLS(LS_KEYS.SIDEBAR_COLLAPSED, false));
+  },
+  setSidebarCollapsed(collapsed) {
+    writeLS(LS_KEYS.SIDEBAR_COLLAPSED, Boolean(collapsed));
   },
 
   /**
