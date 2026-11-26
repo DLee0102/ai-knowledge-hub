@@ -1,0 +1,93 @@
+{
+  "siteTitle": "AI Knowledge Hub",
+  "siteSubtitle": "面向 Gemini 生成 HTML 的 AI 知识点自动索引、分类检索与全文搜索平台",
+  "articlesDir": "articles",
+  "defaultBranch": "main",
+  "github": {
+    "owner": "",
+    "repo": "",
+    "branch": "main"
+  },
+  "defaultCategory": "AI 综合",
+  "categories": [
+    {
+      "name": "核心架构",
+      "color": "#6366f1",
+      "keywords": [
+        "transformer", "attention", "自注意力", "多头注意力", "mha", "gqa", "mla",
+        "moe", "混合专家", "mamba", "ssm", "状态空间", "rope", "旋转位置编码",
+        "位置编码", "layernorm", "rmsnorm", "swiglu", "残差连接", "encoder", "decoder",
+        "神经网络", "cnn", "rnn", "lstm", "resnet", "vit"
+      ]
+    },
+    {
+      "name": "训练与微调",
+      "color": "#ec4899",
+      "keywords": [
+        "lora", "qlora", "peft", "微调", "fine-tuning", "sft", "rlhf", "dpo", "grpo",
+        "ppo", "奖励模型", "对齐", "预训练", "pretraining", "scaling law", "缩放定律",
+        "adam", "adamw", "反向传播", "梯度", "dropout", "deepspeed", "fsdp", "分布式训练",
+        "蒸馏", "distillation", "数据合成", "curriculum"
+      ]
+    },
+    {
+      "name": "RAG 与 Agent",
+      "color": "#0ea5e9",
+      "keywords": [
+        "rag", "检索增强", "embedding", "向量数据库", "vector", "rerank", "重排序",
+        "bm25", "hybrid search", "混合检索", "chunk", "分块", "graphrag",
+        "agent", "智能体", "react", "function calling", "tool use", "mcp",
+        "multi-agent", "多智能体", "workflow", "memory", "规划", "planning", "prompt"
+      ]
+    },
+    {
+      "name": "推理与部署",
+      "color": "#f59e0b",
+      "keywords": [
+        "kv cache", "pagedattention", "vllm", "tensorrt", "sglang", "量化", "quantization",
+        "awq", "gptq", "gguf", "fp8", "int4", "int8", "flashattention", "投机解码",
+        "speculative decoding", "continuous batching", "推理加速", "剪枝", "pruning",
+        "onnx", "ollama", "llama.cpp", "显存优化", "吞吐", "ttft", "tpot"
+      ]
+    },
+    {
+      "name": "多模态与生成",
+      "color": "#10b981",
+      "keywords": [
+        "diffusion", "扩散模型", "ddpm", "ddim", "flow matching", "dit", "stable diffusion",
+        "clip", "vlm", "多模态", "视觉语言", "文生图", "文生视频", "sora", "vae", "gan",
+        "asr", "tts", "语音合成", "ocr", "tokenization", "tokenizer", "bpe", "world model"
+      ]
+    },
+    {
+      "name": "数学与基础理论",
+      "color": "#8b5cf6",
+      "keywords": [
+        "信息熵", "交叉熵", "kl散度", "贝叶斯", "最大似然", "梯度下降", "矩阵分解",
+        "svd", "特征值", "概率分布", "马尔可夫", "强化学习", "mdp", "q-learning",
+        "蒙特卡洛", "mcts", "泛化", "过拟合", "偏差方差", "损失函数", "softmax"
+      ]
+    },
+    {
+      "name": "AI 工程与评测",
+      "color": "#14b8a6",
+      "keywords": [
+        "benchmark", "评测", "eval", "幻觉", "hallucination", "安全", "红队", "jailbreak",
+        "guardrail", "可观测", "tracing", "pytorch", "triton", "cuda", "gpu", "算力",
+        "数据集", "清洗", "langchain", "llamaindex", "上下文工程", "context engineering"
+      ]
+    }
+  ],
+  "tagDictionary": [
+    "Transformer", "Self-Attention", "Multi-Head Attention", "GQA", "MLA", "FlashAttention",
+    "RoPE", "位置编码", "MoE", "Mamba", "RMSNorm", "SwiGLU",
+    "LoRA", "QLoRA", "PEFT", "微调", "SFT", "RLHF", "DPO", "GRPO", "PPO", "模型对齐",
+    "预训练", "Scaling Law", "知识蒸馏", "DeepSpeed", "FSDP",
+    "RAG", "GraphRAG", "Embedding", "向量检索", "Rerank", "Hybrid Search", "BM25", "分块策略",
+    "Agent", "ReAct", "Function Calling", "MCP", "Multi-Agent", "Prompt Engineering", "CoT", "上下文工程",
+    "KV Cache", "PagedAttention", "vLLM", "SGLang", "量化", "GPTQ", "AWQ", "GGUF", "投机解码", "推理优化",
+    "Diffusion", "Flow Matching", "DiT", "CLIP", "VLM", "多模态", "VAE", "Tokenizer", "BPE",
+    "PyTorch", "CUDA", "Triton", "强化学习", "MCTS", "信息论", "KL散度", "Softmax", "交叉熵",
+    "评测", "幻觉治理", "大模型", "LLM", "深度学习", "机器学习"
+  ]
+}

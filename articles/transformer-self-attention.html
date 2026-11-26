@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transformer 自注意力机制与多头注意力深度解析</title>
+  <meta name="ai-category" content="核心架构" />
+  <meta name="ai-tags" content="Transformer, Self-Attention, Multi-Head Attention, 位置编码, PyTorch" />
+  <meta name="description" content="系统拆解 Transformer 的缩放点积注意力（Scaled Dot-Product Attention）、Q/K/V 线性映射、根号 d_k 缩放原因、多头并行表示与交互式注意力权重演示。" />
+  <meta name="ai-created" content="2026-11-20T10:00:00Z" />
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --accent: #4f46e5;
+      --accent-soft: #eef2ff;
+      --border: #e2e8f0;
+      --code-bg: #0f172a;
+      --code-text: #e2e8f0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    header {
+      background: linear-gradient(135deg, #312e81 0%, #4f46e5 55%, #0ea5e9 100%);
+      color: #fff;
+      padding: 44px 36px;
+      border-radius: 20px;
+      margin-bottom: 32px;
+      box-shadow: 0 20px 40px -20px rgba(79, 70, 229, 0.55);
+    }
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      margin-bottom: 14px;
+    }
+    header h1 {
+      margin: 0 0 12px;
+      font-size: clamp(26px, 4vw, 36px);
+      line-height: 1.25;
+    }
+    header p {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 16px;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px 30px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.03);
+    }
+    h2 {
+      margin-top: 0;
+      font-size: 22px;
+      color: #1e1b4b;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    h2::before {
+      content: "";
+      width: 4px;
+      height: 22px;
+      border-radius: 4px;
+      background: var(--accent);
+      display: inline-block;
+    }
+    h3 {
+      font-size: 17px;
+      color: #1e293b;
+      margin-top: 22px;
+    }
+    .formula-box {
+      background: var(--accent-soft);
+      border-left: 4px solid var(--accent);
+      padding: 18px 22px;
+      border-radius: 10px;
+      font-family: "Cambria Math", "Times New Roman", Georgia, serif;
+      font-size: 20px;
+      text-align: center;
+      margin: 18px 0;
+      color: #1e1b4b;
+      overflow-x: auto;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .qkv-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      background: #fcfdff;
+    }
+    .qkv-card strong {
+      display: inline-block;
+      font-size: 18px;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .qkv-card p {
+      margin: 0;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .interactive-panel {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-top: 16px;
+    }
+    .tokens {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .token-btn {
+      border: 1.5px solid #cbd5e1;
+      background: #fff;
+      color: var(--text);
+      padding: 8px 16px;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .token-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .token-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 6px 16px -6px rgba(79, 70, 229, 0.65);
+    }
+    .weight-row {
+      display: grid;
+      grid-template-columns: 90px 1fr 56px;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .bar-track {
+      height: 12px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #6366f1, #0ea5e9);
+      border-radius: 999px;
+      transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 18px 20px;
+      border-radius: 12px;
+      overflow-x: auto;
+      font-size: 13.5px;
+      line-height: 1.6;
+      font-family: "JetBrains Mono", Consolas, monospace;
+    }
+    .tip {
+      background: #ecfeff;
+      border: 1px solid #a5f3fc;
+      border-radius: 12px;
+      padding: 14px 18px;
+      color: #155e75;
+      font-size: 14.5px;
+      margin-top: 14px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14.5px;
+    }
+    th, td {
+      text-align: left;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    th { background: #f1f5f9; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <span class="badge">AI 核心架构 · Deep Dive</span>
+      <h1>Transformer 自注意力机制与多头注意力深度解析</h1>
+      <p>理解现代大语言模型（LLM）的心脏：从 Q/K/V 语义匹配到并行多子空间特征抽取。</p>
+    </header>
+
+    <section>
+      <h2>为什么需要自注意力（Self-Attention）？</h2>
+      <p>
+        在 Transformer 出现之前，序列建模主要依赖 RNN 与 LSTM。它们必须按时间步顺序计算隐藏状态，不仅无法在 GPU 上充分并行，而且在面对长距离依赖时会出现梯度消失与信息压缩瓶颈。
+      </p>
+      <p>
+        <strong>自注意力机制</strong>彻底抛弃了循环结构，允许序列中的任意两个 Token 直接建立 O(1) 路径长度的语义连接。无论两个词相距 5 个字还是 5000 个字，模型都能动态计算它们之间的关联权重，并根据上下文聚合信息。
+      </p>
+    </section>
+
+    <section>
+      <h2>Q、K、V 矩阵的直观理解</h2>
+      <p>对于输入序列的词向量矩阵 X，模型通过三个可学习的线性投影矩阵 W_Q、W_K、W_V 生成 Query、Key 和 Value：</p>
+      <div class="grid-3">
+        <div class="qkv-card">
+          <strong>Query (Q) · 查询</strong>
+          <p>当前 Token 主动发出的“检索意图”：我现在需要从上下文中寻找哪类语义信息？</p>
+        </div>
+        <div class="qkv-card">
+          <strong>Key (K) · 键索引</strong>
+          <p>每个 Token 提供的“语义标签”：我包含什么类型的特征，可供其他词匹配？</p>
+        </div>
+        <div class="qkv-card">
+          <strong>Value (V) · 实际值</strong>
+          <p>每个 Token 真正携带的内容表示：一旦匹配成功，我将按注意力权重贡献多少信息。</p>
+        </div>
+      </div>
+
+      <h3>缩放点积注意力公式</h3>
+      <div class="formula-box">
+        Attention(Q, K, V) = softmax( (Q · K<sup>T</sup>) / √d<sub>k</sub> ) · V
+      </div>
+
+      <h3>为什么要除以 √d<sub>k</sub>？</h3>
+      <p>
+        假设 Q 和 K 的每个维度分量相互独立，均值为 0、方差为 1，则点积 Q·K<sup>T</sup> 的方差会线性放大为 <strong>d<sub>k</sub></strong>。
+        当维度 d<sub>k</sub> 较大（例如 64 或 128）时，点积数值会变得极大，导致 <code>softmax</code> 进入饱和区，输出接近 one-hot 分布，反向传播时的梯度趋近于 0。
+        除以 <strong>√d<sub>k</sub></strong> 可以将方差重新归一化回 1，确保训练过程梯度稳定。
+      </p>
+    </section>
+
+    <section>
+      <h2>交互式演示：观察注意力权重分布</h2>
+      <p>点击下方句子中的任意词语作为 <strong>Query</strong>，观察模型在语义理解时如何将注意力分配到其他词（例如代词“它”重点关注“动物”而非“街道”）：</p>
+      <div class="interactive-panel">
+        <div class="tokens" id="tokenButtons"></div>
+        <div id="weightBars"></div>
+        <div class="tip" id="explainText"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>多头注意力（Multi-Head Attention）与演进对比</h2>
+      <p>
+        单个注意力头只能在一组线性映射子空间中关注一种关系。多头注意力将隐藏维度 d_model 拆分为 h 个独立子空间（每个维度 d_k = d_model / h），并行计算注意力后再拼接投影，使不同 Head 可以同时捕捉句法依存、指代消解、局部搭配与全局主题。
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>变体名称</th>
+            <th>KV 头数量</th>
+            <th>KV Cache 显存开销</th>
+            <th>典型代表模型</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>MHA (Multi-Head)</td>
+            <td>与 Query 头数相同 (H)</td>
+            <td>最高（基准 100%）</td>
+            <td>原始 Transformer, GPT-3</td>
+          </tr>
+          <tr>
+            <td>MQA (Multi-Query)</td>
+            <td>仅 1 组共享 KV</td>
+            <td>极低（1/H），偶有质量损失</td>
+            <td>PaLM, Falcon</td>
+          </tr>
+          <tr>
+            <td>GQA (Grouped-Query)</td>
+            <td>分组共享 (G 组)</td>
+            <td>折中平衡，兼顾速度与精度</td>
+            <td>Llama 3, Qwen2.5, Mistral</td>
+          </tr>
+          <tr>
+            <td>MLA (Multi-Head Latent)</td>
+            <td>低秩潜在向量压缩</td>
+            <td>极低，支持超长上下文推理</td>
+            <td>DeepSeek-V2 / V3 / R1</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>PyTorch 极简实现参考</h2>
+      <pre><code>import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(self, d_model: int, num_heads: int):
+        super().__init__()
+        assert d_model % num_heads == 0
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        self.qkv = nn.Linear(d_model, d_model * 3, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor = None):
+        B, T, C = x.shape
+        qkv = self.qkv(x).view(B, T, 3, self.num_heads, self.d_k).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]  # (B, H, T, d_k)
+
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        if mask is not None:
+            scores = scores.masked_fill(mask == 0, float("-inf"))
+
+        attn = F.softmax(scores, dim=-1)
+        out = torch.matmul(attn, v).transpose(1, 2).contiguous().view(B, T, C)
+        return self.out_proj(out), attn</code></pre>
+    </section>
+  </div>
+
+  <script>
+    const tokens = ["动物", "没有", "穿过", "街道", "因为", "它", "太累了"];
+    const attentionMatrix = {
+      0: { weights: [0.42, 0.08, 0.14, 0.06, 0.04, 0.16, 0.10], note: "“动物”主要聚焦自身主语特征，并与代词“它”及动作“穿过”建立语义连接。" },
+      1: { weights: [0.12, 0.35, 0.34, 0.05, 0.04, 0.05, 0.05], note: "否定词“没有”强烈修饰紧随其后的动词“穿过”。" },
+      2: { weights: [0.24, 0.18, 0.25, 0.23, 0.03, 0.04, 0.03], note: "动词“穿过”同时连接施事主语“动物”与受事宾语“街道”。" },
+      3: { weights: [0.09, 0.05, 0.31, 0.44, 0.03, 0.04, 0.04], note: "“街道”作为宾语重点关注动作“穿过”与自身语义。" },
+      4: { weights: [0.08, 0.10, 0.16, 0.06, 0.24, 0.12, 0.24], note: "因果连词“因为”桥接前半句结果与后半句原因“太累了”。" },
+      5: { weights: [0.54, 0.03, 0.04, 0.07, 0.05, 0.11, 0.16], note: "经典指代消解！自注意力将 54% 的权重分配给“动物”，准确识别“它”指代的是动物而非街道。" },
+      6: { weights: [0.34, 0.05, 0.06, 0.04, 0.10, 0.25, 0.16], note: "状态描述“太累了”同时回溯到“动物”和代词“它”，完成因果归因。" }
+    };
+
+    let activeIdx = 5;
+    const btnWrap = document.getElementById("tokenButtons");
+    const barsWrap = document.getElementById("weightBars");
+    const explainEl = document.getElementById("explainText");
+
+    function render() {
+      btnWrap.innerHTML = tokens.map((tok, i) =>
+        `<button class="token-btn ${i === activeIdx ? "active" : ""}" data-idx="${i}">${tok}</button>`
+      ).join("");
+
+      const data = attentionMatrix[activeIdx];
+      barsWrap.innerHTML = tokens.map((tok, i) => {
+        const pct = Math.round(data.weights[i] * 100);
+        return `
+          <div class="weight-row">
+            <strong>${tok}</strong>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+            <span>${pct}%</span>
+          </div>
+        `;
+      }).join("");
+      explainEl.textContent = "解析：" + data.note;
+
+      btnWrap.querySelectorAll(".token-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          activeIdx = Number(btn.dataset.idx);
+          render();
+        });
+      });
+    }
+    render();
+  </script>
+</body>
+</html>

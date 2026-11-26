@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Knowledge Hub · AI 知识点 HTML 管理与全文检索</title>
+  <meta name="description" content="管理和展示 Gemini 生成的 AI 知识点独立 HTML 页面，支持自动索引、分类标签检索、全文搜索及 GitHub 前端直传。" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234f46e5'/%3E%3Cstop offset='1' stop-color='%230ea5e9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M9 22L16 8l7 14h-3.4l-1.4-3h-4.4l-1.4 3H9zm5.7-5.6h2.6L16 13.3l-1.3 3.1z' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+  <!-- Top Header -->
+  <header class="topbar" id="topbar">
+    <div class="topbar-left">
+      <button class="icon-btn mobile-only" id="mobileMenuBtn" aria-label="打开导航菜单" title="分类与标签">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <a class="brand" href="#/" id="brandHome">
+        <span class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <strong id="siteTitle">AI Knowledge Hub</strong>
+          <small>HTML 知识库</small>
+        </span>
+      </a>
+    </div>
+
+    <div class="search-wrap" role="search">
+      <svg class="search-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="11" cy="11" r="7"/>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input
+        type="search"
+        id="searchInput"
+        class="search-input"
+        placeholder="全文搜索标题、正文、公式、代码… 支持 tag:LoRA cat:核心架构"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button class="search-clear hidden" id="searchClearBtn" aria-label="清空搜索" title="清空 (Esc)">×</button>
+      <kbd class="kbd-hint" title="按 / 或 Ctrl+K 快速搜索">/</kbd>
+    </div>
+
+    <div class="topbar-actions">
+      <button class="btn btn-primary" id="openUploadBtn" title="上传或粘贴 Gemini 生成的 HTML (快捷键 U)">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span class="btn-label">上传 HTML</span>
+      </button>
+      <button class="btn btn-ghost status-btn" id="openSettingsBtn" title="配置 GitHub 同步与仓库管理">
+        <span class="status-dot" id="ghStatusDot"></span>
+        <span class="btn-label" id="ghStatusText">GitHub 配置</span>
+      </button>
+      <button class="icon-btn" id="themeToggleBtn" aria-label="切换明暗主题" title="切换浅色/深色主题">
+        <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Library View -->
+  <div class="workspace" id="libraryView">
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="知识库筛选侧边栏">
+      <div class="sidebar-scroll">
+        <div class="sidebar-section">
+          <div class="sidebar-heading">视图</div>
+          <nav class="nav-list" id="quickNavList">
+            <button class="nav-item active" data-view-filter="all">
+              <span class="nav-item-label">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                全部知识点
+              </span>
+              <span class="count-badge" id="countAll">0</span>
+            </button>
+            <button class="nav-item" data-view-filter="favorites">
+              <span class="nav-item-label">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                我的收藏
+              </span>
+              <span class="count-badge" id="countFavorites">0</span>
+            </button>
+            <button class="nav-item hidden" data-view-filter="local" id="navLocalItem">
+              <span class="nav-item-label">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+                本地暂存
+              </span>
+              <span class="count-badge accent" id="countLocal">0</span>
+            </button>
+          </nav>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-heading">
+            <span>分类目录</span>
+            <span class="muted-small" id="categoryCountMeta">0 分类</span>
+          </div>
+          <div class="nav-list" id="categoryList"></div>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="sidebar-heading">
+            <span>标签检索</span>
+            <div class="tag-controls">
+              <button class="mini-pill" id="tagModeBtn" title="切换多标签匹配逻辑：任意匹配(OR) / 同时匹配(AND)">OR</button>
+              <button class="mini-link hidden" id="clearTagsBtn">清除</button>
+            </div>
+          </div>
+          <input type="text" class="mini-search" id="tagSearchInput" placeholder="筛选标签…" autocomplete="off" />
+          <div class="tag-cloud" id="tagCloud"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-footer" id="sidebarStats">
+        <div class="stat-mini">
+          <span id="statArticles">0 篇</span>
+          <span class="sep">·</span>
+          <span id="statWords">0 字</span>
+        </div>
+        <div class="stat-time" id="statUpdated">索引加载中…</div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <!-- Local staged sync notice -->
+      <div class="sync-banner hidden" id="localSyncBanner">
+        <div class="sync-banner-text">
+          <strong>你有 <span id="localDraftCountText">0</span> 篇本地暂存的 HTML 知识点</strong>
+          <span>仅保存在当前浏览器中，连接 GitHub 后可一键推送到仓库并发布至 GitHub Pages。</span>
+        </div>
+        <div class="sync-banner-actions">
+          <button class="btn btn-primary btn-sm" id="syncAllLocalBtn">一键同步至 GitHub</button>
+        </div>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="content-toolbar">
+        <div class="toolbar-left">
+          <div class="result-summary" id="resultSummary">加载知识点索引中…</div>
+          <div class="active-filters" id="activeFilters"></div>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn-ghost btn-sm" id="refreshIndexBtn" title="刷新或从 GitHub 拉取最新索引">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            <span>同步</span>
+          </button>
+          <select class="select-sm" id="sortSelect" aria-label="排序方式">
+            <option value="updated">最新更新 / 相关度</option>
+            <option value="oldest">最早创建</option>
+            <option value="title">标题 A-Z</option>
+            <option value="words">篇幅从长到短</option>
+          </select>
+          <div class="segmented" role="group" aria-label="视图切换">
+            <button class="seg-btn active" id="viewGridBtn" title="卡片网格视图" aria-label="卡片网格视图">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            </button>
+            <button class="seg-btn" id="viewListBtn" title="紧凑列表视图" aria-label="紧凑列表视图">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cards Container -->
+      <div class="cards-grid" id="articlesContainer"></div>
+
+      <!-- Empty State -->
+      <div class="empty-state hidden" id="emptyState">
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <h3 id="emptyTitle">没有找到匹配的知识点</h3>
+        <p id="emptyDesc">尝试更换关键词、减少标签筛选，或者直接上传新的 Gemini HTML 知识点文件。</p>
+        <div class="empty-actions">
+          <button class="btn btn-ghost" id="resetFiltersBtn">重置所有筛选</button>
+          <button class="btn btn-primary" id="emptyUploadBtn">上传 HTML 知识点</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Dedicated Article Reader View -->
+  <section class="reader-view hidden" id="readerView" aria-label="文章阅读器">
+    <div class="reader-bar">
+      <div class="reader-bar-left">
+        <button class="btn btn-ghost btn-sm" id="readerBackBtn" title="返回列表 (Esc)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          <span>返回</span>
+        </button>
+        <div class="reader-title-group">
+          <span class="cat-badge" id="readerCategory">分类</span>
+          <h1 class="reader-title" id="readerTitle">加载中…</h1>
+          <span class="source-pill hidden" id="readerStatusBadge"></span>
+        </div>
+      </div>
+
+      <div class="reader-bar-right">
+        <div class="reader-find" id="readerFindBar">
+          <input type="text" id="readerFindInput" placeholder="页内查找高亮…" autocomplete="off" />
+          <span class="find-count" id="readerFindCount"></span>
+          <button class="icon-btn sm" id="readerFindPrev" title="上一处">↑</button>
+          <button class="icon-btn sm" id="readerFindNext" title="下一处">↓</button>
+        </div>
+
+        <button class="icon-btn" id="readerFavBtn" title="收藏/取消收藏" aria-label="收藏">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        </button>
+        <button class="icon-btn" id="readerEditBtn" title="编辑元信息或替换 HTML" aria-label="编辑">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="icon-btn" id="readerDownloadBtn" title="下载原始 HTML 文件" aria-label="下载">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+        <a class="icon-btn" id="readerExternalBtn" target="_blank" rel="noopener" title="在新标签页独立打开" aria-label="新标签页打开">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
+        <button class="icon-btn" id="readerInfoBtn" title="展开/收起大纲与元信息面板" aria-label="大纲与元信息">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+        </button>
+        <button class="icon-btn" id="readerFullscreenBtn" title="切换全屏阅读" aria-label="全屏阅读">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+        </button>
+        <button class="icon-btn danger" id="readerDeleteBtn" title="删除此知识点" aria-label="删除">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="reader-body">
+      <div class="reader-frame-wrap">
+        <div class="reader-loading hidden" id="readerLoading">正在加载 HTML 页面…</div>
+        <iframe id="readerFrame" class="reader-frame" title="AI 知识点页面内容"></iframe>
+      </div>
+
+      <aside class="reader-side" id="readerSidePanel">
+        <div class="side-block">
+          <h4>知识点摘要</h4>
+          <p id="readerSummary" class="side-summary"></p>
+        </div>
+        <div class="side-block">
+          <h4>标签</h4>
+          <div id="readerTags" class="card-tags"></div>
+        </div>
+        <div class="side-block">
+          <h4>文档大纲</h4>
+          <div id="readerOutline" class="outline-list"></div>
+        </div>
+        <div class="side-block">
+          <h4>文件信息</h4>
+          <dl class="meta-dl" id="readerMetaDl"></dl>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- Upload / Paste Modal -->
+  <div class="modal-overlay hidden" id="uploadModal" role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div>
+          <h2 id="uploadModalTitle">上传 Gemini AI 知识点 HTML</h2>
+          <p class="modal-subtitle">自动提取标题、正文、分类与 AI 领域标签，支持单文件 / 批量上传或直接粘贴源码</p>
+        </div>
+        <button class="icon-btn" data-close-modal="uploadModal" aria-label="关闭">×</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="tabs">
+          <button class="tab-btn active" data-upload-tab="file">上传 .html 文件（支持批量）</button>
+          <button class="tab-btn" data-upload-tab="paste">直接粘贴 HTML 源码</button>
+        </div>
+
+        <!-- File Upload Tab -->
+        <div class="upload-tab-panel" id="uploadTabFile">
+          <div class="dropzone" id="dropZone">
+            <input type="file" id="fileInput" accept=".html,.htm,text/html" multiple hidden />
+            <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p><strong>点击选择文件</strong> 或将 Gemini 生成的一个或多个 <code>.html</code> 文件拖拽到此处</p>
+            <small>完全在浏览器解析，无需后端服务器；保存时自动更新索引并同步至 GitHub</small>
+          </div>
+        </div>
+
+        <!-- Paste HTML Tab -->
+        <div class="upload-tab-panel hidden" id="uploadTabPaste">
+          <textarea
+            id="pasteHtmlInput"
+            class="code-textarea"
+            rows="9"
+            placeholder="直接粘贴 Gemini 生成的完整 <!DOCTYPE html> ... </html> 代码，或任意 HTML 片段…"
+          ></textarea>
+          <div class="paste-actions">
+            <button class="btn btn-secondary btn-sm" id="parsePasteBtn">解析并添加到发布队列</button>
+          </div>
+        </div>
+
+        <!-- Parsed Queue -->
+        <div class="upload-queue hidden" id="uploadQueueSection">
+          <div class="queue-header">
+            <h3>待保存知识点（<span id="queueCount">0</span>）</h3>
+            <div class="queue-header-right">
+              <label class="checkbox-inline">
+                <input type="checkbox" id="injectMetaCheckbox" checked />
+                <span>自动注入 <code>&lt;meta&gt;</code> 标签（确保 GitHub Actions 保留你的分类与标签）</span>
+              </label>
+              <button class="mini-link" id="clearQueueBtn">清空队列</button>
+            </div>
+          </div>
+          <div id="uploadQueueList" class="queue-list"></div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="footer-note" id="uploadTargetNote"></div>
+        <div class="footer-actions">
+          <button class="btn btn-ghost" data-close-modal="uploadModal">取消</button>
+          <button class="btn btn-secondary" id="saveLocalBtn" disabled>仅保存到本地浏览器</button>
+          <button class="btn btn-primary" id="saveGitHubBtn" disabled>保存并发布到 GitHub</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Metadata / HTML Modal -->
+  <div class="modal-overlay hidden" id="editModal" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 id="editModalTitle">编辑知识点信息</h2>
+          <p class="modal-subtitle" id="editFilePath"></p>
+        </div>
+        <button class="icon-btn" data-close-modal="editModal" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <form id="editArticleForm" class="form-stack">
+          <label class="field">
+            <span>标题</span>
+            <input type="text" id="editTitle" required />
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>分类</span>
+              <input type="text" id="editCategory" list="categoryDatalist" required />
+            </label>
+            <label class="field">
+              <span>标签（逗号分隔）</span>
+              <input type="text" id="editTags" placeholder="例如：Transformer, 注意力机制, PyTorch" />
+            </label>
+          </div>
+          <label class="field">
+            <span>摘要</span>
+            <textarea id="editSummary" rows="3"></textarea>
+          </label>
+          <label class="field">
+            <span>可选：替换底层 HTML 文件</span>
+            <input type="file" id="editReplaceFile" accept=".html,.htm,text/html" />
+            <small class="field-hint">不选择文件则保留原 HTML 内容，仅更新 &lt;meta&gt; 与索引。</small>
+          </label>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div class="footer-note" id="editTargetNote"></div>
+        <div class="footer-actions">
+          <button class="btn btn-ghost" data-close-modal="editModal">取消</button>
+          <button class="btn btn-primary" id="submitEditBtn">保存修改</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GitHub Settings & Setup Guide Modal -->
+  <div class="modal-overlay hidden" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div>
+          <h2 id="settingsModalTitle">GitHub 仓库连接与同步设置</h2>
+          <p class="modal-subtitle">配置后可直接从网页前端上传、编辑、删除 HTML 知识点并自动触发 GitHub Pages 更新</p>
+        </div>
+        <button class="icon-btn" data-close-modal="settingsModal" aria-label="关闭">×</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="form-stack">
+          <div class="field-row">
+            <label class="field">
+              <span>GitHub 用户名 / 组织（Owner）</span>
+              <input type="text" id="ghOwner" placeholder="例如：your-username" />
+            </label>
+            <label class="field">
+              <span>仓库名称（Repo）</span>
+              <input type="text" id="ghRepo" placeholder="例如：ai-knowledge-hub" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>部署分支（Branch）</span>
+              <input type="text" id="ghBranch" value="main" placeholder="main" />
+            </label>
+            <label class="field">
+              <span>HTML 存放目录</span>
+              <input type="text" id="ghArticlesDir" value="articles" placeholder="articles" />
+            </label>
+          </div>
+          <label class="field">
+            <span>Personal Access Token (Fine-Grained PAT)</span>
+            <div class="input-with-btn">
+              <input type="password" id="ghToken" placeholder="github_pat_..." autocomplete="off" />
+              <button type="button" class="btn btn-ghost btn-sm" id="toggleTokenVisBtn">显示</button>
+            </div>
+            <small class="field-hint">
+              安全说明：Token 仅保存在你当前浏览器的 <code>localStorage</code>，仅用于直连 <code>api.github.com</code>，绝不上传第三方服务器。建议创建 <strong>Fine-Grained PAT</strong>，只授权当前单个仓库的 <code>Contents: Read and write</code> 权限。
+            </small>
+          </label>
+
+          <div class="settings-btn-row">
+            <button type="button" class="btn btn-ghost btn-sm" id="autoDetectRepoBtn">从当前网址自动识别仓库</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="testConnBtn">测试连接与写入权限</button>
+            <button type="button" class="btn btn-ghost btn-sm danger-text" id="clearTokenBtn">清除已存 Token</button>
+          </div>
+
+          <div class="alert hidden" id="connStatus"></div>
+
+          <div class="divider"></div>
+
+          <div class="remote-tools">
+            <h4>远程索引维护</h4>
+            <p class="muted-small">如果你通过 <code>git push</code> 新增了 HTML，或刚刚上传完想立即绕过 GitHub Pages CDN 缓存看到最新内容：</p>
+            <div class="settings-btn-row">
+              <button type="button" class="btn btn-secondary btn-sm" id="pullRemoteIndexBtn">从 GitHub API 实时拉取索引</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="rebuildRemoteIndexBtn">全量扫描 articles/ 并重建索引</button>
+            </div>
+            <div class="muted-small hidden" id="rebuildProgress"></div>
+          </div>
+
+          <div class="divider"></div>
+
+          <details class="setup-guide">
+            <summary>查看：如何创建仅限单仓库的 GitHub Token 与开启 Pages 部署</summary>
+            <ol>
+              <li>打开 GitHub 仓库 → <strong>Settings → Pages</strong> → Build and deployment 的 Source 选择 <strong>GitHub Actions</strong>（仓库已内置 <code>.github/workflows/deploy.yml</code>，每次提交自动索引并部署）。</li>
+              <li>打开 <strong>GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token</strong>。</li>
+              <li>Repository access 选择 <strong>Only select repositories</strong> 并只勾选本知识库仓库。</li>
+              <li>Permissions → Repository permissions → 将 <strong>Contents</strong> 设为 <strong>Read and write</strong>，点击生成并粘贴到上方输入框。</li>
+            </ol>
+            <div class="prompt-box">
+              <div class="prompt-box-head">
+                <strong>小技巧：给 Gemini 的可选元信息提示词（不加也能自动识别分类和标签）</strong>
+                <button type="button" class="mini-pill" id="copyPromptBtn">复制提示词</button>
+              </div>
+              <pre id="geminiPromptTip">请生成一个单文件、样式美观、支持交互演示的 HTML 来深入讲解【知识点名称】。
+请在 &lt;head&gt; 中顺便加入：
+&lt;meta name="ai-category" content="分类名（如：核心架构/训练与微调/RAG 与 Agent/推理与部署/多模态与生成）"&gt;
+&lt;meta name="ai-tags" content="3到6个英文或中文技术标签，逗号分隔"&gt;
+&lt;meta name="description" content="100字以内的核心摘要"&gt;</pre>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="footer-note">修改配置后请点击保存</div>
+        <div class="footer-actions">
+          <button class="btn btn-ghost" data-close-modal="settingsModal">关闭</button>
+          <button class="btn btn-primary" id="saveSettingsBtn">保存配置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live HTML Preview Modal (for Upload preview) -->
+  <div class="modal-overlay hidden" id="previewModal" role="dialog" aria-modal="true" aria-labelledby="previewModalTitle">
+    <div class="modal modal-xl">
+      <div class="modal-header">
+        <h2 id="previewModalTitle">HTML 实时预览</h2>
+        <button class="icon-btn" data-close-modal="previewModal" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body preview-modal-body">
+        <iframe id="previewFrame" class="preview-frame" title="HTML 预览"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <datalist id="categoryDatalist"></datalist>
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>
