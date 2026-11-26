@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-26T02:07:05Z",
+  "generatedAt": "2026-11-26T02:07:14Z",
   "totalCount": 4,
   "categories": [
     {
@@ -8,11 +8,11 @@
       "count": 2
     },
     {
-      "name": "训练与微调",
+      "name": "RAG 与 Agent",
       "count": 1
     },
     {
-      "name": "RAG 与 Agent",
+      "name": "训练与微调",
       "count": 1
     }
   ],
@@ -28,30 +28,6 @@
     {
       "name": "Transformer",
       "count": 2
-    },
-    {
-      "name": "大模型",
-      "count": 1
-    },
-    {
-      "name": "分块策略",
-      "count": 1
-    },
-    {
-      "name": "量化",
-      "count": 1
-    },
-    {
-      "name": "微调",
-      "count": 1
-    },
-    {
-      "name": "位置编码",
-      "count": 1
-    },
-    {
-      "name": "预训练",
-      "count": 1
     },
     {
       "name": "BM25",
@@ -95,6 +71,30 @@
     },
     {
       "name": "Rerank",
+      "count": 1
+    },
+    {
+      "name": "位置编码",
+      "count": 1
+    },
+    {
+      "name": "分块策略",
+      "count": 1
+    },
+    {
+      "name": "大模型",
+      "count": 1
+    },
+    {
+      "name": "微调",
+      "count": 1
+    },
+    {
+      "name": "量化",
+      "count": 1
+    },
+    {
+      "name": "预训练",
       "count": 1
     }
   ],
