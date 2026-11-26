@@ -2,15 +2,15 @@
  * AI Knowledge Hub — Main Application Controller
  */
 
-import { storage } from "./storage.js";
+import { storage } from "./storage.js?v=20261126-2";
 import {
   parseHtmlArticle,
   injectMetadataIntoHtml,
   buildIndexPayload,
   sanitizeFilename,
   parseTagsString,
-} from "./parser.js";
-import { searchAndFilterArticles, escapeHtml } from "./search.js";
+} from "./parser.js?v=20261126-2";
+import { searchAndFilterArticles, escapeHtml } from "./search.js?v=20261126-2";
 import {
   detectRepoFromContext,
   isConfigured,
@@ -22,7 +22,7 @@ import {
   rebuildRemoteIndex,
   encodeRepoPath,
   getGitHubFileUrl,
-} from "./github-api.js";
+} from "./github-api.js?v=20261126-2";
 import {
   getCategoryColor,
   formatDate,
@@ -37,7 +37,7 @@ import {
   renderUploadQueue,
   highlightInIframe,
   scrollIframeToHeading,
-} from "./ui.js";
+} from "./ui.js?v=20261126-2";
 
 // ============================================================================
 // Application State

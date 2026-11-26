@@ -3,7 +3,7 @@
  * and same-origin iframe outline navigation & search highlighting.
  */
 
-import { escapeHtml, highlightText, parseQuery } from "./search.js";
+import { escapeHtml, highlightText, parseQuery } from "./search.js?v=20261126-2";
 
 const FALLBACK_COLORS = [
   "#6366f1", "#0ea5e9", "#ec4899", "#f59e0b",

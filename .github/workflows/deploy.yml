@@ -45,6 +45,20 @@ jobs:
             echo "No index changes to commit."
           fi
 
+      - name: Stamp asset cache-busting version for Pages build
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          ver = os.environ.get("GITHUB_SHA", "dev")[:8]
+          targets = [pathlib.Path("index.html"), *sorted(pathlib.Path("assets/js").glob("*.js"))]
+          for p in targets:
+              text = p.read_text(encoding="utf-8")
+              updated = re.sub(r"\?v=[A-Za-z0-9._-]+", f"?v={ver}", text)
+              if updated != text:
+                  p.write_text(updated, encoding="utf-8")
+          print(f"Stamped asset version ?v={ver}")
+          PY
+
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
