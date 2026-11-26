@@ -1,40 +1,20 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-26T02:07:14Z",
-  "totalCount": 4,
+  "generatedAt": "2026-11-26T02:27:47Z",
+  "totalCount": 1,
   "categories": [
     {
       "name": "核心架构",
-      "count": 2
-    },
-    {
-      "name": "RAG 与 Agent",
-      "count": 1
-    },
-    {
-      "name": "训练与微调",
       "count": 1
     }
   ],
   "tags": [
     {
-      "name": "Embedding",
-      "count": 2
-    },
-    {
-      "name": "Self-Attention",
-      "count": 2
-    },
-    {
-      "name": "Transformer",
-      "count": 2
-    },
-    {
-      "name": "BM25",
+      "name": "大模型",
       "count": 1
     },
     {
-      "name": "Hybrid Search",
+      "name": "Embedding",
       "count": 1
     },
     {
@@ -46,55 +26,11 @@
       "count": 1
     },
     {
-      "name": "LoRA",
+      "name": "Self-Attention",
       "count": 1
     },
     {
-      "name": "Multi-Head Attention",
-      "count": 1
-    },
-    {
-      "name": "PEFT",
-      "count": 1
-    },
-    {
-      "name": "PyTorch",
-      "count": 1
-    },
-    {
-      "name": "QLoRA",
-      "count": 1
-    },
-    {
-      "name": "RAG",
-      "count": 1
-    },
-    {
-      "name": "Rerank",
-      "count": 1
-    },
-    {
-      "name": "位置编码",
-      "count": 1
-    },
-    {
-      "name": "分块策略",
-      "count": 1
-    },
-    {
-      "name": "大模型",
-      "count": 1
-    },
-    {
-      "name": "微调",
-      "count": 1
-    },
-    {
-      "name": "量化",
-      "count": 1
-    },
-    {
-      "name": "预训练",
+      "name": "Transformer",
       "count": 1
     }
   ],
@@ -133,101 +69,6 @@
       "createdAt": "2026-11-26T02:06:39Z",
       "updatedAt": "2026-11-26T02:07:04Z",
       "contentHash": "0a1058d043ba"
-    },
-    {
-      "id": "lora-fine-tuning-guide",
-      "slug": "lora-fine-tuning-guide",
-      "filename": "lora-fine-tuning-guide.html",
-      "path": "articles/lora-fine-tuning-guide.html",
-      "title": "LoRA 与 QLoRA 高效微调原理及超参数实战指南",
-      "category": "训练与微调",
-      "tags": [
-        "LoRA",
-        "QLoRA",
-        "微调",
-        "PEFT",
-        "量化",
-        "预训练"
-      ],
-      "summary": "用不到 1% 的可训练参数完成大语言模型领域定制：低秩分解数学直觉、NF4 量化显存压缩与调参经验。 全量微调（Full Fine-Tuning）一个 70B 大模型需要上百 GB 显存来保存权重、梯度以及 AdamW 优化器状态。 LoRA 基于一个关键发现：预训练模型在适配特定下游任务时，权重更新矩阵 ΔW 具有很…",
-      "headings": [
-        "LoRA 与 QLoRA 高效微调原理及超参数实战指南",
-        "核心原理：低秩自适应（Low-Rank Adaptation）",
-        "交互计算器：LoRA 参数压缩比估算",
-        "QLoRA 的三项核心显存黑科技",
-        "PEFT 实战调参速查表"
-      ],
-      "content": "LoRA 与 QLoRA 高效微调原理及超参数实战指南 用不到 1% 的可训练参数完成大语言模型领域定制：低秩分解数学直觉、NF4 量化显存压缩与调参经验。 核心原理：低秩自适应（Low-Rank Adaptation） 全量微调（Full Fine-Tuning）一个 70B 大模型需要上百 GB 显存来保存权重、梯度以及 AdamW 优化器状态。 LoRA 基于一个关键发现：预训练模型在适配特定下游任务时，权重更新矩阵 ΔW 具有很低的“内在秩”（Intrinsic Rank）。 因此，LoRA 冻结原始预训练权重 W0 ∈ ℝd×k，只在旁路注入两个极小的低秩矩阵 A ∈ ℝr×k 和 B ∈ ℝd×r（其中秩 r ≪ min(d, k)）： h = W0x + ΔWx = W0x + (α / r) · BAx 零初始化技巧：矩阵 A 使用高斯随机初始化，矩阵 B 初始化为全 0，确保训练起步时 ΔW = BA = 0，完全不破坏原模型能力。 零推理延迟：训练完成后可直接将 W' = W0 + (α / r)BA 合并回原始权重，线上推理不增加任何额外计算量！ 交互计算器：LoRA 参数压缩比估算 选择单层线性投影的维度与 LoRA Rank（秩 r），实时计算相比全量微调的参数量缩减比例： 隐藏层维度 d_model 2048 (约 1.5B~3B 模型) 4096 (约 7B~8B 模型) 5120 (约 14B 模型) 8192 (约 70B 模型) 低秩维度 Rank (r) r = 4 r = 8 r = 16 (推荐默认) r = 32 r = 64 原始矩阵 W0 参数量 - LoRA (A + B) 可训练参数 - 参数占比（压缩率） - QLoRA 的三项核心显存黑科技 QLoRA 在 LoRA 基础上进一步把冻结的基座模型压缩至 4-bit，使单张 24GB 消费级显卡也能微调 30B+ 模型： 4-bit NormalFloat (NF4)：针对正态分布神经网络权重专门设计的信息论最优 4-bit 量化数据类型，精度远优于普通 INT4。 双重量化（Double Quantization）：对量化常数本身再进行一次 8-bit 量化，每个参数平均再省下约 0.37 bit 显存。 分页优化器（Paged Optimizers）：借助 NVIDIA 统一内存机制，在遇到长序列峰值显存 OOM 前自动将部分优化器状态分页卸载到 CPU 内存。 PEFT 实战调参速查表 超参数 推荐经验值 实战说明 target_modules all-linear (Q/K/V/O + MLP) 研究表明同时在 Attention 与 FFN 层挂载 LoRA 效果显著优于仅挂载 Q/V r (Rank) 8 ~ 32 指令风格对齐用 8~16 即可；注入大量新领域知识可增至 32~64 lora_alpha 通常设为 r 或 2r 控制缩放系数 α/r，固定为 2r 往往收敛更快且稳定 learning_rate 1e-4 ~ 2e-4 LoRA 学习率通常比全量微调（1e-5）高约 5~10 倍",
-      "wordCount": 704,
-      "readingTime": 2,
-      "sizeBytes": 8778,
-      "createdAt": "2026-11-25T16:48:02Z",
-      "updatedAt": "2026-11-25T16:48:02Z",
-      "contentHash": "347a368f1a9a"
-    },
-    {
-      "id": "rag-architecture-deep-dive",
-      "slug": "rag-architecture-deep-dive",
-      "filename": "rag-architecture-deep-dive.html",
-      "path": "articles/rag-architecture-deep-dive.html",
-      "title": "RAG 检索增强生成全景指南：分块、混合检索与重排序",
-      "category": "RAG 与 Agent",
-      "tags": [
-        "RAG",
-        "Embedding",
-        "Hybrid Search",
-        "BM25",
-        "Rerank",
-        "分块策略"
-      ],
-      "summary": "详解生产级 RAG 系统完整链路：文档解析与分块策略（Chunking）、稠密向量与 BM25 混合检索（RRF 融合）、Cross-Encoder Rerank 重排序及常见幻觉治理方案。",
-      "headings": [
-        "RAG 检索增强生成全景指南：分块、混合检索与重排序",
-        "端到端 RAG 核心流水线",
-        "分块策略（Chunking）对比与交互体验",
-        "混合检索（Hybrid Search）与 RRF 融合",
-        "RAG 效果评测黄金三角（RAG Triad）"
-      ],
-      "content": "RAG & Agent · 架构实践 RAG 检索增强生成全景指南：分块、混合检索与重排序 打通私域知识与大语言模型之间的“最后一公里”，构建高召回、低幻觉的企业级问答系统。 端到端 RAG 核心流水线 生产级 RAG 不只是简单的“切片 + 向量搜索”，而是由离线索引与在线检索生成两大阶段构成的精密管道： STEP 1 · 离线 文档解析与分块 OCR/版面还原、语义切分、保留父子层级与元数据。 STEP 2 · 索引 双路索引构建 Embedding 稠密向量索引 + BM25 倒排稀疏索引。 STEP 3 · 召回 查询改写与混合检索 Query Expansion / HyDE + RRF 多路召回融合。 STEP 4 · 精排 Cross-Encoder 重排 对 Top-50 候选精细打分，筛选 Top-5 高相关片段。 STEP 5 · 生成 引用溯源生成 约束 LLM 基于上下文作答并标注出处，降低幻觉。 分块策略（Chunking）对比与交互体验 分块过小会丢失上下文语义，分块过大会稀释向量表示并引入无关噪声。常见策略如下： 分块方式 核心思想 适用场景 固定字符 + 重叠 (Fixed + Overlap) 按固定长度切分，相邻块保留 10%~20% 重叠窗口 快速原型、结构较均匀的纯文本文档 递归语义分块 (Recursive) 优先按标题、段落、句号层级切分，尽量保持语义完整 Markdown、技术手册、知识库文章（最常用） 父子文档检索 (Parent-Child) 用小块做精准检索，命中后将完整大块（父块）送入 LLM 长文档问答，兼顾高检索精度与丰富上下文 上下文增强 (Contextual Retrieval) 离线用小模型为每个分块补充全局摘要前缀再向量化 财务报告、法律条文等强依赖上下文指代的文档 Chunk 长度：45 字符 Overlap 重叠：10 字符 混合检索（Hybrid Search）与 RRF 融合 纯向量检索擅长语义同义匹配（如“苹果手机”匹配“iPhone”），但对专有名词、错误码、型号（如 CUDA_ERROR_700、Qwen2.5-72B）往往召回不佳； 而 BM25 关键词检索 恰好擅长精确字面匹配。 工业界普遍采用 倒数排名融合（Reciprocal Rank Fusion, RRF） 将两路结果无量纲合并： RRF_Score(d) = 1 / (k + rank_vector(d)) + 1 / (k + rank_bm25(d)) （通常取常数 k = 60） 合并得到 Top-50 候选后，再使用 Cross-Encoder Reranker（如 BGE-Reranker、Cohere Rerank）把 Query 和 Document 拼接输入 Transformer 做深度交叉注意力打分，通常能让 Top-5 准确率提升 10%~25%。 RAG 效果评测黄金三角（RAG Triad） Context Relevance（上下文相关性）：检索回来的文档片段是否真的包含回答问题所需的依据？ Groundedness / Faithfulness（忠实度）：模型生成的回答是否完全忠于检索内容，没有凭空编造（幻觉）？ Answer Relevance（回答相关性）：最终回答是否直接、完整地解决了用户的原始提问？",
-      "wordCount": 761,
-      "readingTime": 2,
-      "sizeBytes": 11038,
-      "createdAt": "2026-11-22T09:30:00Z",
-      "updatedAt": "2026-11-25T16:47:59Z",
-      "contentHash": "aa929e3faf2b"
-    },
-    {
-      "id": "transformer-self-attention",
-      "slug": "transformer-self-attention",
-      "filename": "transformer-self-attention.html",
-      "path": "articles/transformer-self-attention.html",
-      "title": "Transformer 自注意力机制与多头注意力深度解析",
-      "category": "核心架构",
-      "tags": [
-        "Transformer",
-        "Self-Attention",
-        "Multi-Head Attention",
-        "位置编码",
-        "PyTorch"
-      ],
-      "summary": "系统拆解 Transformer 的缩放点积注意力（Scaled Dot-Product Attention）、Q/K/V 线性映射、根号 d_k 缩放原因、多头并行表示与交互式注意力权重演示。",
-      "headings": [
-        "Transformer 自注意力机制与多头注意力深度解析",
-        "为什么需要自注意力（Self-Attention）？",
-        "Q、K、V 矩阵的直观理解",
-        "缩放点积注意力公式",
-        "为什么要除以 √dk？",
-        "交互式演示：观察注意力权重分布",
-        "多头注意力（Multi-Head Attention）与演进对比",
-        "PyTorch 极简实现参考"
-      ],
-      "content": "AI 核心架构 · Deep Dive Transformer 自注意力机制与多头注意力深度解析 理解现代大语言模型（LLM）的心脏：从 Q/K/V 语义匹配到并行多子空间特征抽取。 为什么需要自注意力（Self-Attention）？ 在 Transformer 出现之前，序列建模主要依赖 RNN 与 LSTM。它们必须按时间步顺序计算隐藏状态，不仅无法在 GPU 上充分并行，而且在面对长距离依赖时会出现梯度消失与信息压缩瓶颈。 自注意力机制彻底抛弃了循环结构，允许序列中的任意两个 Token 直接建立 O(1) 路径长度的语义连接。无论两个词相距 5 个字还是 5000 个字，模型都能动态计算它们之间的关联权重，并根据上下文聚合信息。 Q、K、V 矩阵的直观理解 对于输入序列的词向量矩阵 X，模型通过三个可学习的线性投影矩阵 W_Q、W_K、W_V 生成 Query、Key 和 Value： Query (Q) · 查询 当前 Token 主动发出的“检索意图”：我现在需要从上下文中寻找哪类语义信息？ Key (K) · 键索引 每个 Token 提供的“语义标签”：我包含什么类型的特征，可供其他词匹配？ Value (V) · 实际值 每个 Token 真正携带的内容表示：一旦匹配成功，我将按注意力权重贡献多少信息。 缩放点积注意力公式 Attention(Q, K, V) = softmax( (Q · KT) / √dk ) · V 为什么要除以 √dk？ 假设 Q 和 K 的每个维度分量相互独立，均值为 0、方差为 1，则点积 Q·KT 的方差会线性放大为 dk。 当维度 dk 较大（例如 64 或 128）时，点积数值会变得极大，导致 softmax 进入饱和区，输出接近 one-hot 分布，反向传播时的梯度趋近于 0。 除以 √dk 可以将方差重新归一化回 1，确保训练过程梯度稳定。 交互式演示：观察注意力权重分布 点击下方句子中的任意词语作为 Query，观察模型在语义理解时如何将注意力分配到其他词（例如代词“它”重点关注“动物”而非“街道”）： 多头注意力（Multi-Head Attention）与演进对比 单个注意力头只能在一组线性映射子空间中关注一种关系。多头注意力将隐藏维度 d_model 拆分为 h 个独立子空间（每个维度 d_k = d_model / h），并行计算注意力后再拼接投影，使不同 Head 可以同时捕捉句法依存、指代消解、局部搭配与全局主题。 变体名称 KV 头数量 KV Cache 显存开销 典型代表模型 MHA (Multi-Head) 与 Query 头数相同 (H) 最高（基准 100%） 原始 Transformer, GPT-3 MQA (Multi-Query) 仅 1 组共享 KV 极低（1/H），偶有质量损失 PaLM, Falcon GQA (Grouped-Query) 分组共享 (G 组) 折中平衡，兼顾速度与精度 Llama 3, Qwen2.5, Mistral MLA (Multi-Head Latent) 低秩潜在向量压缩 极低，支持超长上下文推理 DeepSeek-V2 / V3 / R1 PyTorch 极简实现参考 import math import torch import torch.nn as nn import torch.nn.functional as F class MultiHeadSelfAttention(nn.Module): def __init__(self, d_model: int, num_heads: int): super().__init__() assert d_model % num_heads == 0 self.num_heads = num_heads self.d_k = d_model // num_heads self.qkv = nn.Linear(d_model, d_model * 3, bias=False) self.out_proj = nn.Linear(d_model, d_model, bias=False) def forward(self, x: torch.Tensor, mask: torch.Tensor = None): B, T, C = x.shape qkv = self.qkv(x).view(B, T, 3, self.num_heads, self.d_k).permute(2, 0, 3, 1, 4) q, k, v = qkv[0], qkv[1], qkv[2] # (B, H, T, d_k) scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k) if mask is not None: scores = scores.masked_fill(mask == 0, float(\"-inf\")) attn = F.softmax(scores, dim=-1) out = torch.matmul(attn, v).transpose(1, 2).contiguous().view(B, T, C) return self.out_proj(out), attn",
-      "wordCount": 917,
-      "readingTime": 3,
-      "sizeBytes": 13872,
-      "createdAt": "2026-11-20T10:00:00Z",
-      "updatedAt": "2026-11-25T16:47:57Z",
-      "contentHash": "90398af24a0c"
     }
   ]
 }
