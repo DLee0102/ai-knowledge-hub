@@ -1,0 +1,1819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>深入图解 LLM：Transformer 架构、深度堆叠与因果 vs 双向建模</title>
+<style>
+  :root {
+    --bg: #080c16;
+    --bg-elev: #0f1626;
+    --card: #131c31;
+    --card-hover: #19243e;
+    --border: rgba(148, 163, 184, 0.16);
+    --border-strong: rgba(148, 163, 184, 0.32);
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+
+    --cyan: #38bdf8;
+    --cyan-soft: rgba(56, 189, 248, 0.14);
+    --emerald: #34d399;
+    --emerald-soft: rgba(52, 211, 153, 0.14);
+    --violet: #a78bfa;
+    --violet-soft: rgba(167, 139, 250, 0.15);
+    --amber: #fbbf24;
+    --amber-soft: rgba(251, 191, 36, 0.14);
+    --rose: #fb7185;
+    --rose-soft: rgba(251, 113, 133, 0.14);
+
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-sans);
+    background:
+      radial-gradient(ellipse 80% 50% at 15% -10%, rgba(56, 189, 248, 0.12), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 85% 0%, rgba(167, 139, 250, 0.11), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Navigation */
+  .navbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    background: rgba(8, 12, 22, 0.78);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.2px;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .brand-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--cyan), var(--violet));
+    box-shadow: 0 0 12px var(--cyan);
+  }
+  .nav-links {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .nav-links a {
+    text-decoration: none;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 999px;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+  }
+  .nav-links a:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--border);
+  }
+
+  /* Layout */
+  .container {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  /* Hero */
+  .hero {
+    padding: 64px 0 42px;
+    text-align: center;
+  }
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--cyan);
+    background: var(--cyan-soft);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    margin-bottom: 18px;
+  }
+  .hero h1 {
+    font-size: clamp(28px, 4.4vw, 46px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, #ffffff 10%, #bae6fd 55%, #ddd6fe 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .hero p {
+    max-width: 720px;
+    margin: 0 auto 26px;
+    font-size: 16px;
+    color: var(--text-muted);
+  }
+  .pill-row {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .pill {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    padding: 5px 12px;
+    border-radius: 8px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  /* Sections */
+  section {
+    margin-top: 56px;
+    scroll-margin-top: 76px;
+  }
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 10px;
+  }
+  .section-num {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--cyan);
+    background: var(--cyan-soft);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    padding: 3px 10px;
+    border-radius: 999px;
+  }
+  .section-head h2 {
+    font-size: clamp(21px, 2.6vw, 28px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .section-desc {
+    color: var(--text-muted);
+    font-size: 15px;
+    max-width: 860px;
+    margin-bottom: 24px;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: var(--shadow);
+  }
+  .card-sub {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 18px;
+  }
+  .card-title {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tag {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+  .tag-cyan { background: var(--cyan-soft); color: var(--cyan); border: 1px solid rgba(56,189,248,0.3); }
+  .tag-emerald { background: var(--emerald-soft); color: var(--emerald); border: 1px solid rgba(52,211,153,0.3); }
+  .tag-violet { background: var(--violet-soft); color: var(--violet); border: 1px solid rgba(167,139,250,0.3); }
+  .tag-amber { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(251,191,36,0.3); }
+  .tag-rose { background: var(--rose-soft); color: var(--rose); border: 1px solid rgba(251,113,133,0.3); }
+
+  /* Buttons & Controls */
+  .btn-group {
+    display: inline-flex;
+    background: var(--bg);
+    padding: 4px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+  .btn.active {
+    background: linear-gradient(135deg, rgba(56,189,248,0.22), rgba(167,139,250,0.22));
+    color: #fff;
+    border: 1px solid rgba(56,189,248,0.45);
+    box-shadow: 0 0 16px rgba(56,189,248,0.16);
+  }
+  .btn-action {
+    background: linear-gradient(135deg, #0284c7, #6366f1);
+    color: #fff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 9px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.15s, filter 0.2s;
+  }
+  .btn-action:hover { filter: brightness(1.12); transform: translateY(-1px); }
+  .btn-action:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .btn-ghost {
+    background: rgba(255,255,255,0.05);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 9px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); border-color: var(--border-strong); }
+
+  /* Section 1: Architecture Pipeline */
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 1.08fr 0.92fr;
+    gap: 20px;
+    align-items: start;
+  }
+  .pipeline-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pipe-node {
+    position: relative;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.22s;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .pipe-node:hover {
+    border-color: var(--border-strong);
+    transform: translateX(3px);
+  }
+  .pipe-node.active {
+    background: linear-gradient(90deg, rgba(56,189,248,0.14), rgba(19,28,49,0.95));
+    border-color: var(--cyan);
+    box-shadow: 0 0 24px rgba(56,189,248,0.15);
+  }
+  .pipe-left { display: flex; align-items: center; gap: 12px; }
+  .pipe-icon {
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    display: grid; place-items: center;
+    font-family: var(--font-mono);
+    font-weight: 800;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .pipe-name { font-weight: 700; font-size: 14px; }
+  .pipe-sub { font-size: 12px; color: var(--text-muted); }
+  .pipe-shape {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    background: rgba(0,0,0,0.28);
+    padding: 3px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .pipe-arrow {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1;
+    user-select: none;
+  }
+  .pipe-block-wrap {
+    border: 1.5px dashed rgba(56, 189, 248, 0.38);
+    background: rgba(56, 189, 248, 0.03);
+    border-radius: 14px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pipe-block-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--cyan);
+    padding: 0 4px;
+  }
+
+  .detail-panel {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+    min-height: 440px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .detail-panel h3 {
+    font-size: 19px;
+    margin: 10px 0 8px;
+  }
+  .detail-panel p {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-bottom: 14px;
+  }
+  .formula-box {
+    background: #070b14;
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: #e0f2fe;
+    margin: 12px 0 16px;
+    overflow-x: auto;
+    text-align: center;
+  }
+  .metaphor-box {
+    background: rgba(52, 211, 153, 0.08);
+    border-left: 3px solid var(--emerald);
+    border-radius: 0 8px 8px 0;
+    padding: 11px 14px;
+    font-size: 13.5px;
+    color: #d1fae5;
+    margin-bottom: 14px;
+  }
+  .modern-upgrade {
+    background: rgba(167, 139, 250, 0.08);
+    border: 1px solid rgba(167, 139, 250, 0.25);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: #ede9fe;
+  }
+  .modern-upgrade strong { color: var(--violet); }
+
+  /* QKV Interactive Playground */
+  .lab-box {
+    margin-top: 22px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: var(--shadow);
+  }
+  .lab-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .svg-stage {
+    width: 100%;
+    background: #070b14;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px;
+    overflow-x: auto;
+  }
+  .token-svg-group { cursor: pointer; }
+  .token-svg-group:hover rect { stroke: #fff; }
+  .qkv-legend {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 14px;
+    padding: 12px 16px;
+    background: var(--bg-elev);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    font-size: 13.5px;
+  }
+
+  /* Section 2: Stacking & Residual Stream */
+  .stack-grid {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 20px;
+  }
+  .slider-wrap {
+    margin: 16px 0;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .slider-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .layer-readout {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--cyan);
+  }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--cyan);
+    cursor: pointer;
+    height: 6px;
+  }
+  .depth-zones {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .zone-btn {
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  .zone-btn.active {
+    border-color: var(--cyan);
+    color: #fff;
+    background: var(--cyan-soft);
+  }
+  .bar-metric {
+    margin-top: 10px;
+  }
+  .bar-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .bar-track {
+    height: 8px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.35s ease;
+  }
+
+  /* Animated dashes for residual highway */
+  @keyframes flowDown {
+    from { stroke-dashoffset: 24; }
+    to { stroke-dashoffset: 0; }
+  }
+  .animated-flow {
+    stroke-dasharray: 6 6;
+    animation: flowDown 1.1s linear infinite;
+  }
+  @keyframes pulseGlow {
+    0%, 100% { opacity: 0.65; }
+    50% { opacity: 1; }
+  }
+
+  /* Section 3: Causal vs Bidirectional Matrices */
+  .matrix-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .matrix-card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .matrix-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 5px;
+    margin-top: 14px;
+    table-layout: fixed;
+  }
+  .matrix-table th {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 6px 2px;
+    text-align: center;
+  }
+  .matrix-table th.row-head {
+    text-align: right;
+    padding-right: 8px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.15s;
+  }
+  .matrix-table th.row-head.active-row {
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+  }
+  .m-cell {
+    height: 40px;
+    border-radius: 8px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.18s;
+    border: 1px solid transparent;
+    user-select: none;
+  }
+  .m-cell.allow-causal {
+    background: rgba(56, 189, 248, 0.16);
+    color: var(--cyan);
+    border-color: rgba(56, 189, 248, 0.3);
+  }
+  .m-cell.allow-bidir {
+    background: rgba(167, 139, 250, 0.16);
+    color: var(--violet);
+    border-color: rgba(167, 139, 250, 0.3);
+  }
+  .m-cell.masked {
+    background: rgba(15, 23, 42, 0.7);
+    color: #475569;
+    border-color: rgba(71, 85, 105, 0.2);
+  }
+  .m-cell.row-focus.allow-causal {
+    background: rgba(56, 189, 248, 0.42);
+    color: #fff;
+    border-color: var(--cyan);
+    transform: scale(1.04);
+    box-shadow: 0 0 14px rgba(56, 189, 248, 0.35);
+  }
+  .m-cell.row-focus.allow-bidir {
+    background: rgba(167, 139, 250, 0.42);
+    color: #fff;
+    border-color: var(--violet);
+    transform: scale(1.04);
+    box-shadow: 0 0 14px rgba(167, 139, 250, 0.35);
+  }
+  .m-cell.row-focus.masked {
+    background: rgba(251, 113, 133, 0.14);
+    color: var(--rose);
+    border-color: rgba(251, 113, 133, 0.4);
+  }
+  .matrix-caption {
+    margin-top: 16px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    background: linear-gradient(90deg, rgba(56,189,248,0.1), rgba(167,139,250,0.1));
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  /* Tabbed Deep Simulation: Loss Utilization & KV Cache */
+  .sim-panel {
+    margin-top: 22px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+  }
+  .token-strip {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: 14px 0;
+  }
+  .t-chip {
+    min-width: 78px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    text-align: center;
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    transition: all 0.28s;
+  }
+  .t-chip .word { font-weight: 700; font-size: 15px; display: block; }
+  .t-chip .meta { font-size: 11px; font-family: var(--font-mono); margin-top: 3px; display: block; }
+
+  .t-chip.cached {
+    background: rgba(52, 211, 153, 0.14);
+    border-color: var(--emerald);
+    color: #d1fae5;
+  }
+  .t-chip.new-tok {
+    background: rgba(56, 189, 248, 0.22);
+    border-color: var(--cyan);
+    color: #fff;
+    box-shadow: 0 0 18px rgba(56, 189, 248, 0.28);
+    transform: translateY(-2px);
+  }
+  .t-chip.recompute {
+    background: rgba(251, 113, 133, 0.18);
+    border-color: var(--rose);
+    color: #ffe4e6;
+  }
+  .t-chip.masked-tok {
+    background: rgba(251, 191, 36, 0.18);
+    border: 1.5px dashed var(--amber);
+    color: #fef3c7;
+  }
+  .t-chip.dimmed {
+    opacity: 0.45;
+  }
+
+  .sim-compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-top: 16px;
+  }
+  .stat-pill {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 7px;
+    margin-top: 8px;
+  }
+
+  /* Section 4: Comparison Table & Takeaways */
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--card);
+    box-shadow: var(--shadow);
+  }
+  .comp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    min-width: 680px;
+  }
+  .comp-table th, .comp-table td {
+    padding: 15px 18px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .comp-table thead th {
+    background: rgba(255,255,255,0.03);
+    font-weight: 700;
+    color: #fff;
+  }
+  .comp-table tbody tr:last-child td { border-bottom: none; }
+  .comp-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+  .comp-table td:first-child {
+    font-weight: 700;
+    color: var(--text);
+    width: 18%;
+    white-space: nowrap;
+  }
+
+  .reasons-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-top: 22px;
+  }
+  .reason-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    transition: transform 0.2s, border-color 0.2s;
+  }
+  .reason-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--border-strong);
+  }
+  .reason-num {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .reason-card h4 {
+    font-size: 15px;
+    margin-bottom: 8px;
+  }
+  .reason-card p {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  footer {
+    margin-top: 64px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+  }
+
+  @media (max-width: 920px) {
+    .arch-grid, .stack-grid, .matrix-grid, .sim-compare-grid {
+      grid-template-columns: 1fr;
+    }
+    .reasons-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  @media (max-width: 560px) {
+    .reasons-grid { grid-template-columns: 1fr; }
+    .container { padding: 0 16px 64px; }
+    .card, .lab-box, .sim-panel { padding: 16px; }
+  }
+</style>
+  <meta name="ai-title" content="深入图解 LLM：Transformer 架构、深度堆叠与因果 vs 双向建模" />
+  <meta name="ai-category" content="核心架构" />
+  <meta name="ai-tags" content="Transformer, LLM, KV Cache, Embedding, 大模型, Self-Attention" />
+  <meta name="description" content="点击图中的模块、拖动层数滑块、悬停注意力掩码矩阵，用最直观的动态实验理解大语言模型是如何“读懂上下文”、“堆叠上百层”以及“逐字吐出回答”的。" />
+  <meta name="ai-created" content="2026-11-26T02:06:39Z" />
+  <meta name="ai-updated" content="2026-11-26T02:07:04Z" />
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <a href="#" class="brand">
+      <span class="brand-dot"></span>
+      LLM 底层架构交互式图解
+    </a>
+    <div class="nav-links">
+      <a href="#sec-arch">01 Transformer 架构</a>
+      <a href="#sec-stack">02 深度堆叠机制</a>
+      <a href="#sec-causal">03 因果 vs 双向建模</a>
+      <a href="#sec-summary">04 全景对比与结论</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="hero-badge">交互式可视化教学指南 · 现代 Decoder-Only LLM</div>
+    <h1>Transformer 架构、深度堆叠<br />与因果 vs. 双向建模全景图解</h1>
+    <p>点击图中的模块、拖动层数滑块、悬停注意力掩码矩阵，用最直观的动态实验理解大语言模型是如何“读懂上下文”、“堆叠上百层”以及“逐字吐出回答”的。</p>
+    <div class="pill-row">
+      <span class="pill">Decoder-Only</span>
+      <span class="pill">RoPE 旋转位置编码</span>
+      <span class="pill">Multi-Head / GQA / MLA</span>
+      <span class="pill">Pre-Norm 残差流</span>
+      <span class="pill">Causal Mask &amp; KV Cache</span>
+    </div>
+  </header>
+
+  <!-- SECTION 1: TRANSFORMER ARCHITECTURE -->
+  <section id="sec-arch">
+    <div class="section-head">
+      <span class="section-num">01</span>
+      <h2>Transformer 基础架构与数据流拆解</h2>
+    </div>
+    <p class="section-desc">
+      现代大语言模型（GPT、Claude、DeepSeek、Qwen、Llama 等）普遍采用 <strong>Decoder-Only</strong> 结构。点击左侧流水线的任意组件，右侧将展示其数学原理、生活类比及现代演进。
+    </p>
+
+    <div class="card">
+      <div class="arch-grid">
+        <!-- Left: Clickable Pipeline -->
+        <div class="pipeline-flow" id="pipelineList">
+          <div class="pipe-node active" data-stage="embed">
+            <div class="pipe-left">
+              <div class="pipe-icon" style="background:var(--cyan-soft);color:var(--cyan);">IN</div>
+              <div>
+                <div class="pipe-name">1. 分词与词嵌入（Embedding + RoPE）</div>
+                <div class="pipe-sub">文本切分为 Token ID，转为高维语义向量</div>
+              </div>
+            </div>
+            <span class="pipe-shape">[L, d_model]</span>
+          </div>
+
+          <div class="pipe-arrow">↓</div>
+
+          <div class="pipe-block-wrap">
+            <div class="pipe-block-label">
+              <span>Transformer Block（重复堆叠 N 层，如 32~120 层）</span>
+              <span class="tag tag-cyan">残差流贯穿</span>
+            </div>
+
+            <div class="pipe-node" data-stage="attn">
+              <div class="pipe-left">
+                <div class="pipe-icon" style="background:var(--amber-soft);color:var(--amber);">ATTN</div>
+                <div>
+                  <div class="pipe-name">2A. 多头自注意力（Self-Attention）</div>
+                  <div class="pipe-sub">Token 之间“开会交流”，按权重聚合上下文</div>
+                </div>
+              </div>
+              <span class="pipe-shape">Q · Kᵀ → V</span>
+            </div>
+
+            <div class="pipe-arrow">↓ + 残差相加</div>
+
+            <div class="pipe-node" data-stage="ffn">
+              <div class="pipe-left">
+                <div class="pipe-icon" style="background:var(--violet-soft);color:var(--violet);">FFN</div>
+                <div>
+                  <div class="pipe-name">2B. 前馈网络（SwiGLU / MoE 专家）</div>
+                  <div class="pipe-sub">每个 Token 独立做非线性特征加工与知识提取</div>
+                </div>
+              </div>
+              <span class="pipe-shape">d → 4d → d</span>
+            </div>
+          </div>
+
+          <div class="pipe-arrow">↓</div>
+
+          <div class="pipe-node" data-stage="head">
+            <div class="pipe-left">
+              <div class="pipe-icon" style="background:var(--emerald-soft);color:var(--emerald);">OUT</div>
+              <div>
+                <div class="pipe-name">3. 输出头（RMSNorm + LM Head + Softmax）</div>
+                <div class="pipe-sub">映射到全词表概率分布，采样下一个 Token</div>
+              </div>
+            </div>
+            <span class="pipe-shape">[L, Vocab V]</span>
+          </div>
+        </div>
+
+        <!-- Right: Dynamic Explanation Card -->
+        <div class="detail-panel" id="stageDetail">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Interactive QKV Attention Playground -->
+    <div class="lab-box">
+      <div class="lab-header">
+        <div>
+          <div class="card-title">
+            交互实验 1：自注意力（Self-Attention）Q·K·V“开会模拟器”
+            <span class="tag tag-amber">点击任意词作为 Query</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            观察选中词（Query）如何向其他词（Key）发射注意力连线：线条越粗越亮，代表融合该词 Value 的权重越高。
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <div class="btn-group" id="headSelector">
+            <button class="btn active" data-head="coref">头 #1：语义与指代头</button>
+            <button class="btn" data-head="syntax">头 #2：局部语法头</button>
+          </div>
+          <div class="btn-group" id="qkvModeSelector">
+            <button class="btn active" data-mode="causal">因果模式（仅看左）</button>
+            <button class="btn" data-mode="bidir">双向模式（看全文）</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="svg-stage">
+        <svg id="qkvSvg" viewBox="0 0 840 250" width="100%" style="min-width:640px;display:block;"></svg>
+      </div>
+
+      <div class="qkv-legend" id="qkvCaption">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 2: DEEP STACKING -->
+  <section id="sec-stack">
+    <div class="section-head">
+      <span class="section-num">02</span>
+      <h2>Transformer 是如何“堆叠”成几十上百层的？</h2>
+    </div>
+    <p class="section-desc">
+      堆叠的核心秘密是把所有层挂在同一条<strong>残差流（Residual Stream）</strong>主干道上：每层只负责读取状态、算出增量修正 <code>+Δ</code> 再写回主干道，同时靠 <strong>Pre-Norm</strong> 保证反向传播梯度畅通无阻。
+    </p>
+
+    <div class="stack-grid">
+      <!-- Left: Pre-Norm vs Post-Norm SVG -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+          <div class="card-title" style="margin:0;">单层堆叠结构与梯度高速公路</div>
+          <div class="btn-group" id="normToggle">
+            <button class="btn active" data-norm="pre">Pre-Norm（现代 LLM）</button>
+            <button class="btn" data-norm="post">Post-Norm（2017 原版）</button>
+          </div>
+        </div>
+
+        <div class="svg-stage" style="padding:14px;">
+          <svg id="normSvg" viewBox="0 0 460 360" width="100%" style="display:block;"></svg>
+        </div>
+
+        <div id="normExplain" style="margin-top:14px;font-size:13.5px;color:var(--text-muted);background:var(--bg-elev);padding:14px;border-radius:10px;border:1px solid var(--border);">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Right: Layer Depth Explorer -->
+      <div class="card">
+        <div class="card-title">
+          交互实验 2：拖动滑块，透视 80 层堆叠的“认知分工”
+          <span class="tag tag-emerald">残差流累积</span>
+        </div>
+        <p style="font-size:13.5px;color:var(--text-muted);">
+          每一层张量维度始终保持 <code>[L, d_model]</code> 不变，但随着层数加深，词向量携带的信息会逐层抽象、提纯。
+        </p>
+
+        <div class="slider-wrap">
+          <div class="slider-top">
+            <span style="font-size:13px;font-weight:600;color:var(--text-muted);">当前查看层数（以 80 层大模型为例）</span>
+            <span class="layer-readout" id="layerVal">Layer 1 / 80</span>
+          </div>
+          <input type="range" id="layerSlider" min="1" max="80" value="12" />
+          <div class="depth-zones">
+            <button class="zone-btn active" data-preset="8">浅层（L1~L20）<br/><span style="font-weight:400;opacity:.8;">词法与短语</span></button>
+            <button class="zone-btn" data-preset="44">中层（L21~L60）<br/><span style="font-weight:400;opacity:.8;">知识与推理</span></button>
+            <button class="zone-btn" data-preset="76">深层（L61~L80）<br/><span style="font-weight:400;opacity:.8;">意图与输出</span></button>
+          </div>
+        </div>
+
+        <div class="card-sub" id="depthDetail">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Mini Residual Accumulation Visual -->
+        <div style="margin-top:14px;background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;padding:14px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:8px;">当前层特征活跃度分布（模拟）</div>
+          <div class="bar-metric">
+            <div class="bar-label"><span>表层语法 / 词组拼接</span><span id="mSyntax">0%</span></div>
+            <div class="bar-track"><div class="bar-fill" id="bSyntax" style="background:var(--cyan);"></div></div>
+          </div>
+          <div class="bar-metric">
+            <div class="bar-label"><span>指代消解 / 世界知识 / 逻辑推理</span><span id="mReason">0%</span></div>
+            <div class="bar-track"><div class="bar-fill" id="bReason" style="background:var(--violet);"></div></div>
+          </div>
+          <div class="bar-metric">
+            <div class="bar-label"><span>任务指令对齐 / 下词预测空间映射</span><span id="mOutput">0%</span></div>
+            <div class="bar-track"><div class="bar-fill" id="bOutput" style="background:var(--emerald);"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 3: CAUSAL VS BIDIRECTIONAL -->
+  <section id="sec-causal">
+    <div class="section-head">
+      <span class="section-num">03</span>
+      <h2>因果语言建模（Causal LM） vs. 双向建模（Bidirectional）</h2>
+    </div>
+    <p class="section-desc">
+      两者本质的架构分水岭只在于<strong>注意力掩码（Attention Mask）</strong>的不同——但就是这一张小小的掩码矩阵，直接决定了模型能否高效训练、能否用上 KV Cache 以及最擅长什么任务。
+    </p>
+
+    <!-- Interactive Synchronized Mask Matrices -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+        <div class="card-title" style="margin:0;">
+          交互实验 3：联动注意力可见性矩阵
+          <span class="tag tag-cyan">悬停或点击任意行</span>
+        </div>
+        <span style="font-size:12.5px;color:var(--text-muted);">行 = 当前正在计算的词（Query），列 = 可被参考的词（Key）</span>
+      </div>
+
+      <div class="matrix-grid">
+        <div class="matrix-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong style="color:var(--cyan);font-size:15px;">因果语言建模（Causal LM）</strong>
+            <span class="tag tag-cyan">下三角掩码 · GPT / DeepSeek</span>
+          </div>
+          <p style="font-size:12.5px;color:var(--text-muted);margin-top:4px;">严禁偷看未来：右上三角置为 <code>-∞</code>，经 Softmax 变为 <code>0</code>。</p>
+          <table class="matrix-table" id="causalMatrix"></table>
+        </div>
+
+        <div class="matrix-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong style="color:var(--violet);font-size:15px;">双向建模（Bidirectional / MLM）</strong>
+            <span class="tag tag-violet">全可见矩阵 · BERT / Embedding</span>
+          </div>
+          <p style="font-size:12.5px;color:var(--text-muted);margin-top:4px;">全局视野：任意位置均可同时关注左侧与右侧全部 Token。</p>
+          <table class="matrix-table" id="bidirMatrix"></table>
+        </div>
+      </div>
+
+      <div class="matrix-caption" id="matrixCaption">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+
+    <!-- Interactive Deep Simulation: Loss Efficiency & KV Cache -->
+    <div class="sim-panel">
+      <div class="lab-header">
+        <div>
+          <div class="card-title">
+            交互实验 4：决定命运的两大底层差异模拟
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            为什么现代通用大模型几乎全部抛弃了双向架构，转而选择因果建模？切换下方两个动态实验一看便知。
+          </div>
+        </div>
+        <div class="btn-group" id="simTabs">
+          <button class="btn active" data-sim="kv">实验 A：KV Cache 兼容性（推理）</button>
+          <button class="btn" data-sim="loss">实验 B：训练样本利用率（预训练）</button>
+        </div>
+      </div>
+
+      <!-- TAB A: KV Cache Stepper -->
+      <div id="simKvPane">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;background:var(--bg-elev);padding:14px 16px;border-radius:12px;border:1px solid var(--border);">
+          <div>
+            <div style="font-weight:700;font-size:14px;">自回归逐词生成模拟（Prefill 后进入 Decode 阶段）</div>
+            <div style="font-size:12.5px;color:var(--text-muted);" id="kvStepDesc">当前已生成 3 个词。点击右侧按钮让模型再吐出 1 个新词，观察历史 Token 是否需要重算！</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn-action" id="btnNextTok">生成下一个 Token (+1 步)</button>
+            <button class="btn-ghost" id="btnResetTok">重置</button>
+          </div>
+        </div>
+
+        <div class="sim-compare-grid">
+          <div class="card-sub" style="border-color:rgba(52,211,153,0.3);">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="color:var(--emerald);">因果建模（支持 KV Cache）</strong>
+              <span class="tag tag-emerald">单步复杂度 O(L)</span>
+            </div>
+            <div class="token-strip" id="kvCausalStrip"></div>
+            <div style="font-size:13px;color:var(--text-muted);" id="kvCausalMsg"></div>
+            <div class="stat-pill" style="background:var(--emerald-soft);color:var(--emerald);" id="kvCausalStat"></div>
+          </div>
+
+          <div class="card-sub" style="border-color:rgba(251,113,133,0.3);">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="color:var(--rose);">双向建模（KV Cache 彻底失效）</strong>
+              <span class="tag tag-rose">单步全量重算 O(L²)</span>
+            </div>
+            <div class="token-strip" id="kvBidirStrip"></div>
+            <div style="font-size:13px;color:var(--text-muted);" id="kvBidirMsg"></div>
+            <div class="stat-pill" style="background:var(--rose-soft);color:var(--rose);" id="kvBidirStat"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB B: Training Loss Utilization -->
+      <div id="simLossPane" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;background:var(--bg-elev);padding:14px 16px;border-radius:12px;border:1px solid var(--border);">
+          <div>
+            <div style="font-weight:700;font-size:14px;">同一条 7 词训练语料，单次前向传播产生多少有效 Loss 信号？</div>
+            <div style="font-size:12.5px;color:var(--text-muted);">双向 MLM 不能直接预测下一词（会泄题），必须随机遮盖 ~15% 的词做完形填空。</div>
+          </div>
+          <button class="btn-action" id="btnRemask">重新随机遮盖 [MASK]</button>
+        </div>
+
+        <div class="sim-compare-grid">
+          <div class="card-sub" style="border-color:rgba(56,189,248,0.3);">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="color:var(--cyan);">因果建模：Next-Token Prediction</strong>
+              <span class="tag tag-cyan">100% 位置计算 Loss</span>
+            </div>
+            <div class="token-strip" id="lossCausalStrip"></div>
+            <p style="font-size:13px;color:var(--text-muted);">
+              借助下三角因果掩码，一次并行前向计算即可同时用 <code>第1词→猜第2词</code>、<code>前2词→猜第3词</code> …… <strong>所有 6 个预测位置全部产生有效梯度</strong>，数据算力利用率拉满！
+            </p>
+          </div>
+
+          <div class="card-sub" style="border-color:rgba(251,191,36,0.3);">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="color:var(--amber);">双向建模：Masked LM（完形填空）</strong>
+              <span class="tag tag-amber">仅 ~15% 位置计算 Loss</span>
+            </div>
+            <div class="token-strip" id="lossBidirStrip"></div>
+            <p style="font-size:13px;color:var(--text-muted);">
+              只有被替换为 <code>[MASK]</code> 的极少数位置会计算交叉熵损失，其余约 85% 的 Token 只当陪跑上下文；且引入了<strong>训练有 [MASK]、真实推理无 [MASK]</strong> 的分布差异。
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 4: SUMMARY TABLE & CONVERGENCE -->
+  <section id="sec-summary">
+    <div class="section-head">
+      <span class="section-num">04</span>
+      <h2>全景对比与架构收敛结论</h2>
+    </div>
+    <p class="section-desc">
+      一表看懂两种建模范式的分工边界，以及为何通用大模型最终走向统一。
+    </p>
+
+    <div class="table-wrap">
+      <table class="comp-table">
+        <thead>
+          <tr>
+            <th>对比维度</th>
+            <th style="color:var(--cyan);">因果语言建模（Causal LM）</th>
+            <th style="color:var(--violet);">双向建模（Bidirectional / MLM）</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>典型代表模型</td>
+            <td>GPT、Claude、Gemini、DeepSeek、Qwen、Llama</td>
+            <td>BERT、RoBERTa、DeBERTa、BGE/E5 向量模型、ViT</td>
+          </tr>
+          <tr>
+            <td>主流网络结构</td>
+            <td><strong>Decoder-Only</strong>（仅解码器堆叠）</td>
+            <td><strong>Encoder-Only</strong>（或 Encoder-Decoder 的编码端）</td>
+          </tr>
+          <tr>
+            <td>注意力视野</td>
+            <td>单向（仅看左侧上文 + 自身，右侧严格屏蔽）</td>
+            <td>双向（同时融合左侧上文与右侧下文全部线索）</td>
+          </tr>
+          <tr>
+            <td>训练样本利用率</td>
+            <td><strong>极高（~100% Token 产生梯度）</strong>，公式：∏ P(xₜ | x&lt;ₜ)</td>
+            <td><strong>较低（仅 ~15% 被遮盖词产生梯度）</strong>，存在 [MASK] 失配</td>
+          </tr>
+          <tr>
+            <td>KV Cache 兼容性</td>
+            <td><strong>原生完美兼容</strong>：历史词表示永不因新词改变，支撑高效 Prefill + Decode</td>
+            <td><strong>天然不兼容</strong>：末尾每添一个新词，所有历史 Token 表示全部失效重算</td>
+          </tr>
+          <tr>
+            <td>最佳应用场景</td>
+            <td>开放式文本/代码生成、多轮对话、长思维链推理（CoT）、通用 Agent</td>
+            <td>RAG 文本向量检索（Embedding）、重排（Reranker）、文本分类、视觉编码</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="reasons-grid">
+      <div class="reason-card">
+        <div class="reason-num" style="color:var(--cyan);">01</div>
+        <h4>训练算力效率碾压</h4>
+        <p>万亿 Token 预训练中每个词都贡献监督信号，且凭借下三角掩码依然可整句高度并行训练，无须串行等待。</p>
+      </div>
+      <div class="reason-card">
+        <div class="reason-num" style="color:var(--emerald);">02</div>
+        <h4>推理工程的基石</h4>
+        <p>严格因果性是 KV Cache 成立的前提。没有因果掩码，就无法在 Prefill 缓存后以低延迟逐字 Decode。</p>
+      </div>
+      <div class="reason-card">
+        <div class="reason-num" style="color:var(--violet);">03</div>
+        <h4>万物皆可“续写”统一</h4>
+        <p>问答、翻译、编程、工具调用乃至深度慢思考，全都能统一成 Prompt → Response 续写，天然适配 RL 后训练。</p>
+      </div>
+      <div class="reason-card">
+        <div class="reason-num" style="color:var(--amber);">04</div>
+        <h4>双向建模并未消失</h4>
+        <p>双向架构依然是 RAG 检索向量（Embedding）、精排模型（Reranker）与多模态视觉编码器（ViT）的黄金底座。</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    单文件离线交互式图解 · 涵盖 Modern Decoder-Only Transformer / Pre-Norm 残差流 / Causal &amp; Bidirectional Modeling
+  </footer>
+</div>
+
+<script>
+/* =========================================================
+   1. SECTION 1: PIPELINE STAGE INSPECTOR
+   ========================================================= */
+const STAGES = {
+  embed: {
+    badge: '<span class="tag tag-cyan">阶段 1 · 输入编码</span>',
+    title: '分词、词嵌入与旋转位置编码（RoPE）',
+    desc: '计算机无法直接计算文字。首先由分词器（Tokenizer）把文本切分为子词 ID，再通过查表（Embedding Matrix）把每个 ID 映射成一个高维实数向量（如 4096 维或 8192 维）。同时，由于自注意力对词序不敏感，必须注入位置信息。',
+    formula: 'X₀ = Embedding(Token_IDs) ∈ ℝ^(L × d_model)  ｜  Q, K ← RoPE(Q, K, pos)',
+    metaphor: '<strong>形象类比：</strong>把中文汉字翻译成模型大脑里的高维“语义坐标”，并给每个词贴上精准的“座位号”，让模型分得清“狗咬人”和“人咬狗”。',
+    upgrade: '<strong>现代 LLM 演进：</strong>放弃了 2017 原版直接相加的绝对正弦位置编码，普遍采用 <strong>RoPE（旋转位置编码）</strong>——在每层 Attention 内部直接旋转 Q/K 向量角度，天然表达相对距离，支持 128K~1M 超长上下文扩展。'
+  },
+  attn: {
+    badge: '<span class="tag tag-amber">阶段 2A · Token 间信息混合</span>',
+    title: '多头自注意力（Multi-Head Self-Attention）',
+    desc: '这是 Transformer 最具革命性的部件。每个词生成 Query（我要找什么）、Key（我有什么特征）、Value（我能贡献的内容）。通过点积计算相关性并加权融合，任意距离的两个词都能一步直达建立联系，彻底摆脱了 RNN 的逐步遗忘。',
+    formula: 'Attention(Q, K, V) = softmax( (Q · Kᵀ) / √d_k + Mask ) · V',
+    metaphor: '<strong>形象类比：</strong>句子里的所有词坐在一起“开圆桌会”。代词“它”大喊一声（Query）“谁是前面提到的动物？”，名词“小猫”举手回应（Key），然后把自己的语义信息（Value）传给“它”。',
+    upgrade: '<strong>现代 LLM 演进：</strong>为大幅压缩推理时的 KV Cache 显存，标准 MHA 演进为 <strong>GQA（分组查询注意力）</strong> 与 <strong>MLA（多头潜在注意力）</strong>，超长文本架构还会穿插线性注意力或稀疏注意力。'
+  },
+  ffn: {
+    badge: '<span class="tag tag-violet">阶段 2B · 单 Token 深度加工</span>',
+    title: '前馈神经网络（SwiGLU FFN / 混合专家 MoE）',
+    desc: '如果说 Attention 负责“词与词横向交流”，FFN 则负责“每个词纵向独立思考”。它对每个位置单独进行先升维、非线性激活、再降维的变换。研究发现，大模型记忆的大量世界事实知识就存储在 FFN 矩阵参数中。',
+    formula: 'FFN_SwiGLU(x) = ( SiLU(xW₁) ⊙ (xW₃) ) · W₂   ｜   MoE: ∑ gᵢ(x) · Expertᵢ(x)',
+    metaphor: '<strong>形象类比：</strong>圆桌会议（Attention）结束后，每个词回到自己的独立工位，把刚听到的上下文信息结合自己的长期记忆库消化、推理、重组。',
+    upgrade: '<strong>现代 LLM 演进：</strong>用门控激活 <strong>SwiGLU</strong> 替代早期 ReLU；千亿至万亿旗舰模型普遍升级为 <strong>稀疏 MoE（混合专家）</strong>——配几十上百个专家 FFN，路由器每次只唤醒最相关的少数几个专家，兼顾超大知识容量与极快推理速度。'
+  },
+  head: {
+    badge: '<span class="tag tag-emerald">阶段 3 · 预测与采样</span>',
+    title: '最终归一化、LM Head 与 Softmax 输出',
+    desc: '经历全部 N 层残差流加工后，最后一个 Token 的隐藏向量已经高度浓缩了前文的全部语义与推理结果。经过最终 RMSNorm 和一个线性层（LM Head）将其映射到整个词表维度（如 15 万个候选词），再经 Softmax 变成概率分布。',
+    formula: 'P(next_token | context) = softmax( RMSNorm(h_N) · W_vocab ) ∈ ℝ^V',
+    metaphor: '<strong>形象类比：</strong>深思熟虑后，模型在 15 万字的字典里给每个候选词打上概率分（比如“饿了”82%、“困了”10%…），再按 Temperature / Top-P 策略挑出最合适的一个词吐出来。',
+    upgrade: '<strong>现代 LLM 演进：</strong>前沿模型常额外挂接轻量 <strong>MTP（Multi-Token Prediction，多词预测）</strong> 草稿头，在训练时增加稠密监督，在推理与强化学习采样时直接开启自投机解码提速。'
+  }
+};
+
+function renderStage(key) {
+  const s = STAGES[key];
+  document.getElementById('stageDetail').innerHTML = `
+    <div>
+      ${s.badge}
+      <h3>${s.title}</h3>
+      <p>${s.desc}</p>
+      <div class="formula-box">${s.formula}</div>
+      <div class="metaphor-box">${s.metaphor}</div>
+    </div>
+    <div class="modern-upgrade">${s.upgrade}</div>
+  `;
+}
+
+document.querySelectorAll('#pipelineList .pipe-node').forEach(node => {
+  node.addEventListener('click', () => {
+    document.querySelectorAll('#pipelineList .pipe-node').forEach(n => n.classList.remove('active'));
+    node.classList.add('active');
+    renderStage(node.dataset.stage);
+  });
+});
+renderStage('embed');
+
+/* =========================================================
+   2. SECTION 1 LAB: INTERACTIVE QKV ATTENTION SIMULATOR
+   ========================================================= */
+const QKV_TOKENS = ['那只', '小猫', '跳上', '桌子', '因为', '它', '饿了'];
+// Pre-designed realistic raw attention logits (7x7) for two distinct heads
+const RAW_ATTN = {
+  coref: [
+    [2.6, 2.2, 0.3, 0.2, 0.1, 0.3, 0.2], // 那只 -> 关注小猫
+    [1.8, 2.8, 1.1, 0.4, 0.2, 1.9, 1.0], // 小猫 -> 关注那只、它
+    [0.4, 2.3, 2.2, 2.1, 0.3, 0.5, 0.4], // 跳上 -> 小猫、桌子
+    [0.2, 0.7, 2.1, 2.7, 0.3, 0.2, 0.2], // 桌子 -> 跳上
+    [0.2, 0.8, 1.6, 0.8, 2.0, 1.4, 2.2], // 因为 -> 跳上、饿了
+    [1.1, 3.6, 0.6, 0.3, 0.7, 1.8, 1.5], // 它   -> 强烈指代“小猫”！
+    [0.3, 2.1, 1.1, 0.2, 1.7, 2.6, 2.3]  // 饿了 -> 它、小猫、因为
+  ],
+  syntax: [
+    [2.2, 3.1, 0.4, 0.1, 0.1, 0.1, 0.1], // 相邻修饰
+    [2.5, 2.1, 2.4, 0.4, 0.1, 0.2, 0.1],
+    [0.2, 2.6, 2.0, 2.7, 0.3, 0.1, 0.1],
+    [0.1, 0.4, 2.8, 2.2, 1.0, 0.2, 0.1],
+    [0.1, 0.2, 0.9, 1.6, 2.1, 2.4, 0.8],
+    [0.2, 0.5, 0.3, 0.3, 2.2, 2.0, 2.9],
+    [0.1, 0.3, 0.2, 0.1, 1.2, 3.0, 2.2]
+  ]
+};
+
+let qkvQueryIdx = 5; // Default to "它" so the coreference "它 -> 小猫" pops immediately!
+let qkvHead = 'coref';
+let qkvMode = 'causal';
+
+function computeSoftmaxWeights(logits, queryIdx, mode) {
+  const masked = logits.map((v, k) => (mode === 'causal' && k > queryIdx) ? -Infinity : v);
+  const maxVal = Math.max(...masked.filter(v => v !== -Infinity));
+  const exps = masked.map(v => v === -Infinity ? 0 : Math.exp(v - maxVal));
+  const sum = exps.reduce((a, b) => a + b, 0);
+  return exps.map(e => e / sum);
+}
+
+function renderQKV() {
+  const svg = document.getElementById('qkvSvg');
+  const weights = computeSoftmaxWeights(RAW_ATTN[qkvHead][qkvQueryIdx], qkvQueryIdx, qkvMode);
+  const xPos = i => 65 + i * 118;
+  const baseY = 186;
+  const boxW = 84, boxH = 40;
+
+  let html = `
+    <defs>
+      <linearGradient id="gradCyan" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#fbbf24"/>
+        <stop offset="100%" stop-color="#38bdf8"/>
+      </linearGradient>
+      <linearGradient id="gradViolet" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#fbbf24"/>
+        <stop offset="100%" stop-color="#a78bfa"/>
+      </linearGradient>
+    </defs>
+  `;
+
+  // Draw attention arcs first (behind tokens)
+  weights.forEach((w, k) => {
+    const x1 = xPos(qkvQueryIdx);
+    const x2 = xPos(k);
+    const topY = baseY - boxH / 2 - 4;
+
+    if (qkvMode === 'causal' && k > qkvQueryIdx) {
+      // Faint blocked future indicator
+      const midX = (x1 + x2) / 2;
+      const ctrlY = Math.max(26, topY - Math.abs(k - qkvQueryIdx) * 28);
+      html += `<path d="M ${x1} ${topY} Q ${midX} ${ctrlY} ${x2} ${topY}" fill="none" stroke="rgba(251,113,133,0.18)" stroke-width="1.3" stroke-dasharray="4 5"/>`;
+      return;
+    }
+
+    const strokeW = Math.max(1.2, w * 11);
+    const opacity = Math.max(0.18, Math.min(1, w * 1.9 + 0.12));
+    const color = qkvMode === 'causal' ? 'url(#gradCyan)' : 'url(#gradViolet)';
+
+    if (k === qkvQueryIdx) {
+      // Self-attention loop
+      html += `<path d="M ${x1 - 14} ${topY} C ${x1 - 24} ${topY - 46}, ${x1 + 24} ${topY - 46}, ${x1 + 14} ${topY}" fill="none" stroke="#fbbf24" stroke-width="${strokeW}" opacity="${opacity}" stroke-linecap="round"/>`;
+      html += `<text x="${x1}" y="${topY - 40}" fill="#fde68a" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">${Math.round(w * 100)}%</text>`;
+    } else {
+      const dist = Math.abs(k - qkvQueryIdx);
+      const midX = (x1 + x2) / 2;
+      const ctrlY = Math.max(24, topY - dist * 29 - 14);
+      const peakY = 0.25 * topY + 0.5 * ctrlY + 0.25 * topY; // Quadratic Bezier midpoint at t=0.5
+
+      html += `<path d="M ${x1} ${topY} Q ${midX} ${ctrlY} ${x2} ${topY}" fill="none" stroke="${color}" stroke-width="${strokeW}" opacity="${opacity}" stroke-linecap="round"/>`;
+      if (w >= 0.08) {
+        html += `
+          <rect x="${midX - 20}" y="${peakY - 10}" width="40" height="18" rx="9" fill="#080c16" stroke="${w > 0.28 ? '#38bdf8' : 'rgba(148,163,184,0.35)'}" stroke-width="1"/>
+          <text x="${midX}" y="${peakY + 3}" fill="${w > 0.28 ? '#ffffff' : '#cbd5e1'}" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">${Math.round(w * 100)}%</text>
+        `;
+      }
+    }
+  });
+
+  // Draw Token Nodes
+  QKV_TOKENS.forEach((tok, i) => {
+    const cx = xPos(i);
+    const isQuery = i === qkvQueryIdx;
+    const isBlocked = qkvMode === 'causal' && i > qkvQueryIdx;
+    const w = weights[i];
+
+    let fill = '#131c31';
+    let stroke = 'rgba(148,163,184,0.3)';
+    let textColor = '#f1f5f9';
+    let subLabel = isBlocked ? '被 Mask (-∞)' : `Key ${Math.round(w * 100)}%`;
+    let subColor = isBlocked ? '#fb7185' : '#94a3b8';
+
+    if (isQuery) {
+      fill = 'rgba(251,191,36,0.2)';
+      stroke = '#fbbf24';
+      textColor = '#fef3c7';
+      subLabel = '当前 Query';
+      subColor = '#fbbf24';
+    } else if (isBlocked) {
+      fill = 'rgba(15,23,42,0.55)';
+      stroke = 'rgba(251,113,133,0.35)';
+      textColor = '#64748b';
+    } else if (w >= 0.22) {
+      fill = qkvMode === 'causal' ? 'rgba(56,189,248,0.22)' : 'rgba(167,139,250,0.22)';
+      stroke = qkvMode === 'causal' ? '#38bdf8' : '#a78bfa';
+      subColor = qkvMode === 'causal' ? '#7dd3fc' : '#ddd6fe';
+    }
+
+    html += `
+      <g class="token-svg-group" onclick="selectQKVToken(${i})">
+        <rect x="${cx - boxW/2}" y="${baseY - boxH/2}" width="${boxW}" height="${boxH}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="${isQuery ? 2.2 : 1.4}"/>
+        <text x="${cx}" y="${baseY + 5}" fill="${textColor}" font-size="15" font-weight="700" text-anchor="middle">${tok}</text>
+        <text x="${cx}" y="${baseY + 38}" fill="${subColor}" font-size="11" font-family="monospace" font-weight="600" text-anchor="middle">${subLabel}</text>
+      </g>
+    `;
+  });
+
+  svg.innerHTML = html;
+
+  // Find strongest attended non-self key (or self if none)
+  let topK = qkvQueryIdx, topW = -1;
+  weights.forEach((w, k) => { if (k !== qkvQueryIdx && w > topW) { topW = w; topK = k; } });
+
+  const modeNote = qkvMode === 'causal'
+    ? (qkvQueryIdx < QKV_TOKENS.length - 1
+      ? `<span style="color:var(--rose);">右侧 ${QKV_TOKENS.length - 1 - qkvQueryIdx} 个未来词被因果掩码屏蔽（权重=0）</span>`
+      : `<span style="color:var(--emerald);">已到句尾，可见前文全部词</span>`)
+    : `<span style="color:var(--violet);">双向视野开启：左侧与右侧全部词均参与加权融合</span>`;
+
+  const headDesc = qkvHead === 'coref'
+    ? `在 <strong>语义指代头</strong> 中，当前词 <strong style="color:var(--amber);">「${QKV_TOKENS[qkvQueryIdx]}」</strong> 最关注 <strong style="color:var(--cyan);">「${QKV_TOKENS[topK]}」(${Math.round(topW*100)}%)</strong>。`
+    : `在 <strong>局部语法头</strong> 中，当前词 <strong style="color:var(--amber);">「${QKV_TOKENS[qkvQueryIdx]}」</strong> 更偏重与紧邻词 <strong style="color:var(--cyan);">「${QKV_TOKENS[topK]}」(${Math.round(topW*100)}%)</strong> 组合短语。`;
+
+  document.getElementById('qkvCaption').innerHTML = `
+    <div>${headDesc}</div>
+    <div style="font-size:12.5px;">${modeNote}</div>
+  `;
+}
+
+window.selectQKVToken = idx => { qkvQueryIdx = idx; renderQKV(); };
+
+document.querySelectorAll('#headSelector .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#headSelector .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    qkvHead = btn.dataset.head;
+    renderQKV();
+  });
+});
+
+document.querySelectorAll('#qkvModeSelector .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#qkvModeSelector .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    qkvMode = btn.dataset.mode;
+    renderQKV();
+  });
+});
+renderQKV();
+
+/* =========================================================
+   3. SECTION 2: PRE-NORM VS POST-NORM SVG & DEPTH SLIDER
+   ========================================================= */
+function renderNormDiagram(type) {
+  const svg = document.getElementById('normSvg');
+  if (type === 'pre') {
+    svg.innerHTML = `
+      <!-- Clean Unobstructed Residual Highway on Left -->
+      <line x1="92" y1="22" x2="92" y2="338" stroke="rgba(52,211,153,0.28)" stroke-width="10" stroke-linecap="round"/>
+      <line x1="92" y1="22" x2="92" y2="338" stroke="#34d399" stroke-width="3" class="animated-flow"/>
+      <text x="92" y="15" fill="#34d399" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">残差流主干道 x (无阻断)</text>
+
+      <!-- Branch 1: RMSNorm -> Attention -->
+      <path d="M 92 52 L 175 52 L 175 72" fill="none" stroke="#94a3b8" stroke-width="2"/>
+      <rect x="130" y="72" width="160" height="32" rx="8" fill="rgba(56,189,248,0.16)" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="210" y="92" fill="#e0f2fe" font-size="12" font-weight="700" text-anchor="middle">RMSNorm（前置归一化）</text>
+
+      <line x1="210" y1="104" x2="210" y2="118" stroke="#94a3b8" stroke-width="2"/>
+      <rect x="130" y="118" width="160" height="36" rx="8" fill="rgba(251,191,36,0.16)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="210" y="140" fill="#fef3c7" font-size="12.5" font-weight="700" text-anchor="middle">Multi-Head Attention</text>
+
+      <path d="M 210 154 L 210 172 L 106 172" fill="none" stroke="#34d399" stroke-width="2"/>
+      <circle cx="92" cy="172" r="13" fill="#0f1626" stroke="#34d399" stroke-width="2"/>
+      <text x="92" y="177" fill="#34d399" font-size="16" font-weight="800" text-anchor="middle">+</text>
+      <text x="315" y="142" fill="#94a3b8" font-size="11" font-family="monospace">+ Δ_attn</text>
+
+      <!-- Branch 2: RMSNorm -> FFN -->
+      <path d="M 92 204 L 175 204 L 175 220" fill="none" stroke="#94a3b8" stroke-width="2"/>
+      <rect x="130" y="220" width="160" height="32" rx="8" fill="rgba(56,189,248,0.16)" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="210" y="240" fill="#e0f2fe" font-size="12" font-weight="700" text-anchor="middle">RMSNorm（前置归一化）</text>
+
+      <line x1="210" y1="252" x2="210" y2="266" stroke="#94a3b8" stroke-width="2"/>
+      <rect x="130" y="266" width="160" height="36" rx="8" fill="rgba(167,139,250,0.18)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="210" y="288" fill="#ede9fe" font-size="12.5" font-weight="700" text-anchor="middle">FFN (SwiGLU / MoE)</text>
+
+      <path d="M 210 302 L 210 320 L 106 320" fill="none" stroke="#34d399" stroke-width="2"/>
+      <circle cx="92" cy="320" r="13" fill="#0f1626" stroke="#34d399" stroke-width="2"/>
+      <text x="92" y="325" fill="#34d399" font-size="16" font-weight="800" text-anchor="middle">+</text>
+      <text x="315" y="290" fill="#94a3b8" font-size="11" font-family="monospace">+ Δ_ffn</text>
+
+      <!-- Callout badge -->
+      <rect x="310" y="54" width="136" height="58" rx="9" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.4)"/>
+      <text x="378" y="75" fill="#34d399" font-size="11.5" font-weight="700" text-anchor="middle">恒等直通车畅通</text>
+      <text x="378" y="92" fill="#cbd5e1" font-size="10.5" text-anchor="middle">梯度直达第 1 层</text>
+      <text x="378" y="106" fill="#cbd5e1" font-size="10.5" text-anchor="middle">稳堆 100+ 层不崩</text>
+
+      <text x="92" y="354" fill="#34d399" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">送往下一层 Block ↓</text>
+    `;
+    document.getElementById('normExplain').innerHTML = `
+      <strong style="color:var(--emerald);">Pre-Norm 公式：h = x + Sublayer(RMSNorm(x))</strong><br/>
+      归一化放在分支入口，<strong>残差主干道（左侧绿线）保持纯加法恒等连接</strong>。反向传播时梯度可以直接沿主干道无衰减回传至最浅层，这是 GPT-3/4、Llama、DeepSeek、Qwen 能稳定堆叠 80~120+ 层的核心工程基石。
+    `;
+  } else {
+    svg.innerHTML = `
+      <!-- Interrupted Main Path on Left -->
+      <line x1="92" y1="22" x2="92" y2="338" stroke="rgba(251,113,133,0.32)" stroke-width="6" stroke-dasharray="5 5"/>
+      <text x="92" y="15" fill="#fb7185" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">主干道被 LayerNorm 拦截</text>
+
+      <!-- Branch 1: Attention -->
+      <path d="M 92 48 L 210 48 L 210 74" fill="none" stroke="#94a3b8" stroke-width="2"/>
+      <rect x="135" y="74" width="150" height="36" rx="8" fill="rgba(251,191,36,0.16)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="210" y="96" fill="#fef3c7" font-size="12.5" font-weight="700" text-anchor="middle">Multi-Head Attention</text>
+      <path d="M 210 110 L 210 128 L 106 128" fill="none" stroke="#94a3b8" stroke-width="2"/>
+      <circle cx="92" cy="128" r="12" fill="#0f1626" stroke="#fbbf24" stroke-width="2"/>
+      <text x="92" y="133" fill="#fbbf24" font-size="15" font-weight="800" text-anchor="middle">+</text>
+
+      <!-- Post LayerNorm 1 ON THE HIGHWAY -->
+      <rect x="30" y="150" width="124" height="30" rx="8" fill="rgba(251,113,133,0.22)" stroke="#fb7185" stroke-width="1.8"/>
+      <text x="92" y="169" fill="#ffe4e6" font-size="11.5" font-weight="700" text-anchor="middle">LayerNorm 关卡</text>
+
+      <!-- Branch 2: FFN -->
+      <path d="M 92 200 L 210 200 L 210 222" fill="none" stroke="#94a3b8" stroke-width="2"/>
+      <rect x="135" y="222" width="150" height="36" rx="8" fill="rgba(167,139,250,0.18)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="210" y="244" fill="#ede9fe" font-size="12.5" font-weight="700" text-anchor="middle">FFN (ReLU)</text>
+      <path d="M 210 258 L 210 276 L 106 276" fill="none" stroke="#94a3b8" stroke-width="2"/>
+      <circle cx="92" cy="276" r="12" fill="#0f1626" stroke="#a78bfa" stroke-width="2"/>
+      <text x="92" y="281" fill="#a78bfa" font-size="15" font-weight="800" text-anchor="middle">+</text>
+
+      <!-- Post LayerNorm 2 ON THE HIGHWAY -->
+      <rect x="30" y="298" width="124" height="30" rx="8" fill="rgba(251,113,133,0.22)" stroke="#fb7185" stroke-width="1.8"/>
+      <text x="92" y="317" fill="#ffe4e6" font-size="11.5" font-weight="700" text-anchor="middle">LayerNorm 关卡</text>
+
+      <!-- Warning badge -->
+      <rect x="305" y="110" width="142" height="74" rx="9" fill="rgba(251,113,133,0.12)" stroke="rgba(251,113,133,0.45)"/>
+      <text x="376" y="131" fill="#fb7185" font-size="11.5" font-weight="700" text-anchor="middle">深层训练易不稳定</text>
+      <text x="376" y="149" fill="#cbd5e1" font-size="10.5" text-anchor="middle">每次相加都要过归一化</text>
+      <text x="376" y="164" fill="#cbd5e1" font-size="10.5" text-anchor="middle">梯度连乘缩放易失衡</text>
+      <text x="376" y="178" fill="#cbd5e1" font-size="10.5" text-anchor="middle">强依赖精细 Warmup</text>
+
+      <text x="92" y="352" fill="#94a3b8" font-size="11" font-family="monospace" text-anchor="middle">送往下一层 Block ↓</text>
+    `;
+    document.getElementById('normExplain').innerHTML = `
+      <strong style="color:var(--rose);">Post-Norm 公式：h = LayerNorm(x + Sublayer(x))</strong><br/>
+      2017 年原版 Transformer 与 BERT 使用此结构。虽然在浅层（6~12 层）表达力很强，但因为<strong>每层残差主干道都被 LayerNorm 截断</strong>，一旦堆到几十上百层，深浅层梯度幅值会严重失衡，训练极易发散。
+    `;
+  }
+}
+
+document.querySelectorAll('#normToggle .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#normToggle .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderNormDiagram(btn.dataset.norm);
+  });
+});
+renderNormDiagram('pre');
+
+/* Depth Slider */
+const layerSlider = document.getElementById('layerSlider');
+function updateDepth(layer) {
+  layer = Number(layer);
+  document.getElementById('layerVal').textContent = `Layer ${layer} / 80`;
+
+  let zoneIdx = 0, title = '', badge = '', desc = '';
+  if (layer <= 20) {
+    zoneIdx = 0;
+    badge = '<span class="tag tag-cyan">浅层区域 · L1 ~ L20</span>';
+    title = '局部词法、拼写与短语拼接';
+    desc = '模型把相邻的子词拼接成完整概念（例如把“机”“器”“学”“习”融合成“机器学习”），识别词性、标点边界与局部句法搭配。';
+  } else if (layer <= 60) {
+    zoneIdx = 1;
+    badge = '<span class="tag tag-violet">中层区域 · L21 ~ L60</span>';
+    title = '复杂语义、长程指代与知识推理核心';
+    desc = '注意力头在这里完成跨句指代消解与逻辑关联，FFN/MoE 专家在这里大量提取事实知识并执行多步抽象推导，是模型“思考”最密集的地带。';
+  } else {
+    zoneIdx = 2;
+    badge = '<span class="tag tag-emerald">深层区域 · L61 ~ L80</span>';
+    title = '指令意图收敛与词表空间投影';
+    desc = '模型根据当前对话意图与格式约束（如 JSON、代码、语气）整合前文结论，把抽象语义精准校准到即将生成的下一个具体词上。';
+  }
+
+  document.getElementById('depthDetail').innerHTML = `
+    <div style="margin-bottom:6px;">${badge}</div>
+    <div style="font-size:15.5px;font-weight:700;margin-bottom:6px;">${title}</div>
+    <div style="font-size:13.5px;color:var(--text-muted);">${desc}</div>
+  `;
+
+  document.querySelectorAll('.zone-btn').forEach((b, idx) => {
+    b.classList.toggle('active', idx === zoneIdx);
+  });
+
+  // Smooth bell-curve-like activations across depth 1..80
+  const p = (layer - 1) / 79;
+  const vSyntax = Math.round(Math.max(12, 95 * Math.exp(-Math.pow((p - 0.12) / 0.30, 2))));
+  const vReason = Math.round(Math.max(15, 96 * Math.exp(-Math.pow((p - 0.52) / 0.32, 2))));
+  const vOutput = Math.round(Math.max(10, 98 * Math.exp(-Math.pow((p - 0.94) / 0.30, 2))));
+
+  document.getElementById('mSyntax').textContent = vSyntax + '%';
+  document.getElementById('bSyntax').style.width = vSyntax + '%';
+  document.getElementById('mReason').textContent = vReason + '%';
+  document.getElementById('bReason').style.width = vReason + '%';
+  document.getElementById('mOutput').textContent = vOutput + '%';
+  document.getElementById('bOutput').style.width = vOutput + '%';
+}
+
+layerSlider.addEventListener('input', e => updateDepth(e.target.value));
+document.querySelectorAll('.zone-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    layerSlider.value = btn.dataset.preset;
+    updateDepth(btn.dataset.preset);
+  });
+});
+updateDepth(12);
+
+/* =========================================================
+   4. SECTION 3: SYNCHRONIZED MASK MATRICES
+   ========================================================= */
+const MAT_TOKENS = ['我', '爱', '机器', '学习', '模型'];
+let activeMatrixRow = 2; // Default: "机器"
+
+function buildMatrix(tableId, mode) {
+  const table = document.getElementById(tableId);
+  let html = '<thead><tr><th>Q \\ K</th>';
+  MAT_TOKENS.forEach(t => { html += `<th>${t}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  MAT_TOKENS.forEach((rowTok, r) => {
+    html += `<tr><th class="row-head ${r === activeMatrixRow ? 'active-row' : ''}" data-row="${r}">${rowTok}</th>`;
+    MAT_TOKENS.forEach((colTok, c) => {
+      const allowed = mode === 'bidir' || c <= r;
+      const cls = [
+        'm-cell',
+        allowed ? (mode === 'causal' ? 'allow-causal' : 'allow-bidir') : 'masked',
+        r === activeMatrixRow ? 'row-focus' : ''
+      ].join(' ');
+      const txt = allowed ? '✓' : '-∞';
+      html += `<td class="${cls}" data-row="${r}" data-col="${c}">${txt}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+
+  table.querySelectorAll('[data-row]').forEach(el => {
+    const handler = () => {
+      activeMatrixRow = Number(el.dataset.row);
+      renderBothMatrices();
+    };
+    el.addEventListener('mouseenter', handler);
+    el.addEventListener('click', handler);
+  });
+}
+
+function renderBothMatrices() {
+  buildMatrix('causalMatrix', 'causal');
+  buildMatrix('bidirMatrix', 'bidir');
+
+  const cur = MAT_TOKENS[activeMatrixRow];
+  const leftSeen = MAT_TOKENS.slice(0, activeMatrixRow + 1).join('、');
+  const blocked = MAT_TOKENS.slice(activeMatrixRow + 1);
+  const blockedStr = blocked.length > 0 ? `屏蔽未来词「${blocked.join('、')}」` : '已到句尾，无后续未来词';
+
+  document.getElementById('matrixCaption').innerHTML = `
+    <div>
+      正在查看第 <strong>${activeMatrixRow + 1}</strong> 个词 <strong>「${cur}」</strong>：
+      <span style="color:var(--cyan);">因果模式</span>仅可见 <strong>「${leftSeen}」</strong>（${blockedStr}）；
+      <span style="color:var(--violet);">双向模式</span>可同时看见全文全部 5 个词。
+    </div>
+    <span class="tag tag-amber">左右矩阵已联动</span>
+  `;
+}
+renderBothMatrices();
+
+/* =========================================================
+   5. SECTION 3 LAB: KV CACHE STEPPER & LOSS UTILIZATION
+   ========================================================= */
+document.querySelectorAll('#simTabs .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#simTabs .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const isKv = btn.dataset.sim === 'kv';
+    document.getElementById('simKvPane').style.display = isKv ? 'block' : 'none';
+    document.getElementById('simLossPane').style.display = isKv ? 'none' : 'block';
+  });
+});
+
+// KV Cache Stepper
+const KV_SEQ = ['今天', '天气', '真', '不错', '适合', '散步'];
+let kvStep = 3; // 3 tokens prefilled initially
+
+function renderKVSim() {
+  const curSlice = KV_SEQ.slice(0, kvStep);
+  const causalStrip = document.getElementById('kvCausalStrip');
+  const bidirStrip = document.getElementById('kvBidirStrip');
+
+  if (kvStep === 3) {
+    // Initial Prefill State
+    causalStrip.innerHTML = curSlice.map(t => `
+      <div class="t-chip cached"><span class="word">${t}</span><span class="meta">Prefill 缓存</span></div>
+    `).join('');
+    bidirStrip.innerHTML = curSlice.map(t => `
+      <div class="t-chip" style="border-color:var(--violet);color:#ede9fe;"><span class="word">${t}</span><span class="meta">双向编码完成</span></div>
+    `).join('');
+
+    document.getElementById('kvStepDesc').textContent = '初始状态：3 个 Prompt 词已完成 Prefill 预填充。点击“生成下一个 Token”观察新增 1 个词后的变化！';
+    document.getElementById('kvCausalMsg').textContent = '前 3 个词的 K/V 已锁入显存（KV Cache），静待下一步复用。';
+    document.getElementById('kvBidirMsg').textContent = '前 3 个词两两互相融合了上下文。现在尝试往末尾添加一个新词…';
+    document.getElementById('kvCausalStat').textContent = '本步需计算的 Token 数：3（初始 Prefill）';
+    document.getElementById('kvBidirStat').textContent = '本步需计算的 Token 数：3（初始编码）';
+  } else {
+    // Decode Step: new token appended at index kvStep - 1
+    causalStrip.innerHTML = curSlice.map((t, i) => {
+      if (i < kvStep - 1) {
+        return `<div class="t-chip cached"><span class="word">${t}</span><span class="meta">缓存命中 ✓</span></div>`;
+      }
+      return `<div class="t-chip new-tok"><span class="word">${t}</span><span class="meta">仅算这 1 个</span></div>`;
+    }).join('');
+
+    bidirStrip.innerHTML = curSlice.map((t, i) => {
+      if (i < kvStep - 1) {
+        return `<div class="t-chip recompute"><span class="word">${t}</span><span class="meta">失效！重算 ✗</span></div>`;
+      }
+      return `<div class="t-chip new-tok"><span class="word">${t}</span><span class="meta">新增词影响前文</span></div>`;
+    }).join('');
+
+    const newest = curSlice[kvStep - 1];
+    document.getElementById('kvStepDesc').innerHTML = `第 <strong>${kvStep - 3}</strong> 步 Decode：模型新生成了 <strong>「${newest}」</strong>（当前序列总长 ${kvStep}）。`;
+    document.getElementById('kvCausalMsg').innerHTML = `因为因果掩码规定历史词看不到「${newest}」，<strong>前面 ${kvStep - 1} 个词的 K/V 纹丝不动、直接复用</strong>，只需为新词算 1 次！`;
+    document.getElementById('kvBidirMsg').innerHTML = `因为双向注意力允许前文回头看「${newest}」，<strong>前面 ${kvStep - 1} 个词的表示全部改变</strong>，旧缓存作废，整句 ${kvStep} 个词被迫从头全算！`;
+    document.getElementById('kvCausalStat').textContent = `本步仅计算 1 个新 Token（省去 ${kvStep - 1} 个历史词重算）`;
+    document.getElementById('kvBidirStat').textContent = `本步被迫重算全部 ${kvStep} 个 Token（长文本算力雪崩）`;
+  }
+
+  document.getElementById('btnNextTok').disabled = kvStep >= KV_SEQ.length;
+}
+
+document.getElementById('btnNextTok').addEventListener('click', () => {
+  if (kvStep < KV_SEQ.length) { kvStep++; renderKVSim(); }
+});
+document.getElementById('btnResetTok').addEventListener('click', () => {
+  kvStep = 3; renderKVSim();
+});
+renderKVSim();
+
+// Training Loss Utilization Simulator
+const LOSS_SEQ = ['深度', '学习', '让', '大', '模型', '理解', '世界'];
+let maskedIndex = 3;
+
+function renderLossSim() {
+  document.getElementById('lossCausalStrip').innerHTML = LOSS_SEQ.map((t, i) => {
+    const isLast = i === LOSS_SEQ.length - 1;
+    const label = isLast ? '句尾停止' : `→ 猜「${LOSS_SEQ[i + 1]}」`;
+    return `<div class="t-chip ${isLast ? 'dimmed' : 'new-tok'}">
+      <span class="word">${t}</span>
+      <span class="meta">${label}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('lossBidirStrip').innerHTML = LOSS_SEQ.map((t, i) => {
+    const isMask = i === maskedIndex;
+    return `<div class="t-chip ${isMask ? 'masked-tok' : 'dimmed'}">
+      <span class="word">${isMask ? '[MASK]' : t}</span>
+      <span class="meta">${isMask ? '计算 Loss ✓ (' + t + ')' : '无 Loss 梯度'}</span>
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('btnRemask').addEventListener('click', () => {
+  let next = maskedIndex;
+  while (next === maskedIndex) { next = Math.floor(Math.random() * LOSS_SEQ.length); }
+  maskedIndex = next;
+  renderLossSim();
+});
+renderLossSim();
+</script>
+</body>
+</html>

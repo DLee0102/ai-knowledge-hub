@@ -1,32 +1,72 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-25T16:49:10Z",
-  "totalCount": 3,
+  "generatedAt": "2026-11-26T02:07:05Z",
+  "totalCount": 4,
   "categories": [
     {
-      "name": "RAG 与 Agent",
-      "count": 1
-    },
-    {
       "name": "核心架构",
-      "count": 1
+      "count": 2
     },
     {
       "name": "训练与微调",
+      "count": 1
+    },
+    {
+      "name": "RAG 与 Agent",
       "count": 1
     }
   ],
   "tags": [
     {
+      "name": "Embedding",
+      "count": 2
+    },
+    {
+      "name": "Self-Attention",
+      "count": 2
+    },
+    {
+      "name": "Transformer",
+      "count": 2
+    },
+    {
+      "name": "大模型",
+      "count": 1
+    },
+    {
+      "name": "分块策略",
+      "count": 1
+    },
+    {
+      "name": "量化",
+      "count": 1
+    },
+    {
+      "name": "微调",
+      "count": 1
+    },
+    {
+      "name": "位置编码",
+      "count": 1
+    },
+    {
+      "name": "预训练",
+      "count": 1
+    },
+    {
       "name": "BM25",
       "count": 1
     },
     {
-      "name": "Embedding",
+      "name": "Hybrid Search",
       "count": 1
     },
     {
-      "name": "Hybrid Search",
+      "name": "KV Cache",
+      "count": 1
+    },
+    {
+      "name": "LLM",
       "count": 1
     },
     {
@@ -56,37 +96,44 @@
     {
       "name": "Rerank",
       "count": 1
-    },
-    {
-      "name": "Self-Attention",
-      "count": 1
-    },
-    {
-      "name": "Transformer",
-      "count": 1
-    },
-    {
-      "name": "位置编码",
-      "count": 1
-    },
-    {
-      "name": "分块策略",
-      "count": 1
-    },
-    {
-      "name": "微调",
-      "count": 1
-    },
-    {
-      "name": "量化",
-      "count": 1
-    },
-    {
-      "name": "预训练",
-      "count": 1
     }
   ],
   "articles": [
+    {
+      "id": "ai_studio_code",
+      "slug": "ai_studio_code",
+      "filename": "ai_studio_code.html",
+      "path": "articles/ai_studio_code.html",
+      "title": "深入图解 LLM：Transformer 架构、深度堆叠与因果 vs 双向建模",
+      "category": "核心架构",
+      "tags": [
+        "Transformer",
+        "LLM",
+        "KV Cache",
+        "Embedding",
+        "大模型",
+        "Self-Attention"
+      ],
+      "summary": "点击图中的模块、拖动层数滑块、悬停注意力掩码矩阵，用最直观的动态实验理解大语言模型是如何“读懂上下文”、“堆叠上百层”以及“逐字吐出回答”的。",
+      "headings": [
+        "Transformer 架构、深度堆叠与因果 vs. 双向建模全景图解",
+        "Transformer 基础架构与数据流拆解",
+        "Transformer 是如何“堆叠”成几十上百层的？",
+        "因果语言建模（Causal LM） vs. 双向建模（Bidirectional）",
+        "全景对比与架构收敛结论",
+        "训练算力效率碾压",
+        "推理工程的基石",
+        "万物皆可“续写”统一",
+        "双向建模并未消失"
+      ],
+      "content": "LLM 底层架构交互式图解 01 Transformer 架构 02 深度堆叠机制 03 因果 vs 双向建模 04 全景对比与结论 交互式可视化教学指南 · 现代 Decoder-Only LLM Transformer 架构、深度堆叠 与因果 vs. 双向建模全景图解 点击图中的模块、拖动层数滑块、悬停注意力掩码矩阵，用最直观的动态实验理解大语言模型是如何“读懂上下文”、“堆叠上百层”以及“逐字吐出回答”的。 Decoder-Only RoPE 旋转位置编码 Multi-Head / GQA / MLA Pre-Norm 残差流 Causal Mask & KV Cache 01 Transformer 基础架构与数据流拆解 现代大语言模型（GPT、Claude、DeepSeek、Qwen、Llama 等）普遍采用 Decoder-Only 结构。点击左侧流水线的任意组件，右侧将展示其数学原理、生活类比及现代演进。 IN 1. 分词与词嵌入（Embedding + RoPE） 文本切分为 Token ID，转为高维语义向量 [L, d_model] ↓ Transformer Block（重复堆叠 N 层，如 32~120 层） 残差流贯穿 ATTN 2A. 多头自注意力（Self-Attention） Token 之间“开会交流”，按权重聚合上下文 Q · Kᵀ → V ↓ + 残差相加 FFN 2B. 前馈网络（SwiGLU / MoE 专家） 每个 Token 独立做非线性特征加工与知识提取 d → 4d → d ↓ OUT 3. 输出头（RMSNorm + LM Head + Softmax） 映射到全词表概率分布，采样下一个 Token [L, Vocab V] 交互实验 1：自注意力（Self-Attention）Q·K·V“开会模拟器” 点击任意词作为 Query 观察选中词（Query）如何向其他词（Key）发射注意力连线：线条越粗越亮，代表融合该词 Value 的权重越高。 头 #1：语义与指代头 头 #2：局部语法头 因果模式（仅看左） 双向模式（看全文） 02 Transformer 是如何“堆叠”成几十上百层的？ 堆叠的核心秘密是把所有层挂在同一条残差流（Residual Stream）主干道上：每层只负责读取状态、算出增量修正 +Δ 再写回主干道，同时靠 Pre-Norm 保证反向传播梯度畅通无阻。 单层堆叠结构与梯度高速公路 Pre-Norm（现代 LLM） Post-Norm（2017 原版） 交互实验 2：拖动滑块，透视 80 层堆叠的“认知分工” 残差流累积 每一层张量维度始终保持 [L, d_model] 不变，但随着层数加深，词向量携带的信息会逐层抽象、提纯。 当前查看层数（以 80 层大模型为例） Layer 1 / 80 浅层（L1~L20） 词法与短语 中层（L21~L60） 知识与推理 深层（L61~L80） 意图与输出 当前层特征活跃度分布（模拟） 表层语法 / 词组拼接0% 指代消解 / 世界知识 / 逻辑推理0% 任务指令对齐 / 下词预测空间映射0% 03 因果语言建模（Causal LM） vs. 双向建模（Bidirectional） 两者本质的架构分水岭只在于注意力掩码（Attention Mask）的不同——但就是这一张小小的掩码矩阵，直接决定了模型能否高效训练、能否用上 KV Cache 以及最擅长什么任务。 交互实验 3：联动注意力可见性矩阵 悬停或点击任意行 行 = 当前正在计算的词（Query），列 = 可被参考的词（Key） 因果语言建模（Causal LM） 下三角掩码 · GPT / DeepSeek 严禁偷看未来：右上三角置为 -∞，经 Softmax 变为 0。 双向建模（Bidirectional / MLM） 全可见矩阵 · BERT / Embedding 全局视野：任意位置均可同时关注左侧与右侧全部 Token。 交互实验 4：决定命运的两大底层差异模拟 为什么现代通用大模型几乎全部抛弃了双向架构，转而选择因果建模？切换下方两个动态实验一看便知。 实验 A：KV Cache 兼容性（推理） 实验 B：训练样本利用率（预训练） 自回归逐词生成模拟（Prefill 后进入 Decode 阶段） 当前已生成 3 个词。点击右侧按钮让模型再吐出 1 个新词，观察历史 Token 是否需要重算！ 生成下一个 Token (+1 步) 重置 因果建模（支持 KV Cache） 单步复杂度 O(L) 双向建模（KV Cache 彻底失效） 单步全量重算 O(L²) 同一条 7 词训练语料，单次前向传播产生多少有效 Loss 信号？ 双向 MLM 不能直接预测下一词（会泄题），必须随机遮盖 ~15% 的词做完形填空。 重新随机遮盖 [MASK] 因果建模：Next-Token Prediction 100% 位置计算 Loss 借助下三角因果掩码，一次并行前向计算即可同时用 第1词→猜第2词、前2词→猜第3词 …… 所有 6 个预测位置全部产生有效梯度，数据算力利用率拉满！ 双向建模：Masked LM（完形填空） 仅 ~15% 位置计算 Loss 只有被替换为 [MASK] 的极少数位置会计算交叉熵损失，其余约 85% 的 Token 只当陪跑上下文；且引入了训练有 [MASK]、真实推理无 [MASK] 的分布差异。 04 全景对比与架构收敛结论 一表看懂两种建模范式的分工边界，以及为何通用大模型最终走向统一。 对比维度 因果语言建模（Causal LM） 双向建模（Bidirectional / MLM） 典型代表模型 GPT、Claude、Gemini、DeepSeek、Qwen、Llama BERT、RoBERTa、DeBERTa、BGE/E5 向量模型、ViT 主流网络结构 Decoder-Only（仅解码器堆叠） Encoder-Only（或 Encoder-Decoder 的编码端） 注意力视野 单向（仅看左侧上文 + 自身，右侧严格屏蔽） 双向（同时融合左侧上文与右侧下文全部线索） 训练样本利用率 极高（~100% Token 产生梯度），公式：∏ P(xₜ | x<ₜ) 较低（仅 ~15% 被遮盖词产生梯度），存在 [MASK] 失配 KV Cache 兼容性 原生完美兼容：历史词表示永不因新词改变，支撑高效 Prefill + Decode 天然不兼容：末尾每添一个新词，所有历史 Token 表示全部失效重算 最佳应用场景 开放式文本/代码生成、多轮对话、长思维链推理（CoT）、通用 Agent RAG 文本向量检索（Embedding）、重排（Reranker）、文本分类、视觉编码 01 训练算力效率碾压 万亿 Token 预训练中每个词都贡献监督信号，且凭借下三角掩码依然可整句高度并行训练，无须串行等待。 02 推理工程的基石 严格因果性是 KV Cache 成立的前提。没有因果掩码，就无法在 Prefill 缓存后以低延迟逐字 Decode。 03 万物皆可“续写”统一 问答、翻译、编程、工具调用乃至深度慢思考，全都能统一成 Prompt → Response 续写，天然适配 RL 后训练。 04 双向建模并未消失 双向架构依然是 RAG 检索向量（Embedding）、精排模型（Reranker）与多模态视觉编码器（ViT）的黄金底座。 单文件离线交互式图解 · 涵盖 Modern Decoder-Only Transformer / Pre-Norm 残差流 / Causal & Bidirectional Modeling",
+      "wordCount": 1751,
+      "readingTime": 5,
+      "sizeBytes": 73991,
+      "createdAt": "2026-11-26T02:06:39Z",
+      "updatedAt": "2026-11-26T02:07:04Z",
+      "contentHash": "0a1058d043ba"
+    },
     {
       "id": "lora-fine-tuning-guide",
       "slug": "lora-fine-tuning-guide",
