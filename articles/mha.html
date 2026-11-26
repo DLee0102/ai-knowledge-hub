@@ -330,7 +330,7 @@
   <meta name="ai-tags" content="GQA, Transformer, MLA, FlashAttention, RoPE, KV Cache" />
   <meta name="description" content="从“为什么必须拆成多头”与零循环张量变形出发，直击今天 Llama / Qwen / DeepSeek 等前沿大模型的核心底牌：GQA/MLA 显存瘦身、RoPE 旋转位置编码、QK-Norm 稳压、FlashAttention 分块算子与百万上下文混合架构。" />
   <meta name="ai-created" content="2026-11-26T07:30:13Z" />
-  <meta name="ai-updated" content="2026-11-26T07:30:14Z" />
+  <meta name="ai-updated" content="2026-11-26T07:34:29Z" />
 </head>
 <body>
 
@@ -1053,4 +1053,358 @@ const EVO_SPECS = {
     color: '#fb7185',
     bytesPerTok: 2 * 80 * 64 * 128 * 2, // 2.5 MB/tok -> 80 GB @ 32K
     ratio: '1× 基准',
-    desc: '<strong>2017 原版 / GPT-3 / Llama 1：</strong>64 个 Q 头配 64 个独立 K 头和 64 个 V 头。精度最高，但单条 32K 对话就要吃满整张 <stron
+    desc: '<strong>2017 原版 / GPT-3 / Llama 1：</strong>64 个 Q 头配 64 个独立 K 头和 64 个 V 头。精度最高，但单条 32K 对话就要吃满整张 <strong>80GB H100</strong>，高并发推理完全扛不住！'
+  },
+  gqa: {
+    name: 'GQA（分组查询 64:8 · 开源主流）',
+    short: 'GQA (8:1)',
+    color: '#38bdf8',
+    bytesPerTok: 2 * 80 * 8 * 128 * 2, // 0.3125 MB/tok -> 10 GB @ 32K
+    ratio: '省 8× 显存',
+    desc: '<strong>Llama 3/4、Qwen3、Gemma、Mistral 标配：</strong>将 64 个 Q 头分为 8 组，每 8 个 Q 头共享 1 组 K/V 头。在 FlashAttention 中零拷贝共享读取，<strong>显存立砍 8 倍</strong>且效果几乎无损 MHA！'
+  },
+  mla: {
+    name: 'MLA（DeepSeek 潜空间压缩）',
+    short: 'MLA (DeepSeek)',
+    color: '#34d399',
+    bytesPerTok: 80 * (512 + 64) * 2, // d_c=512 latent + d_r=64 decoupled RoPE -> ~2.81 GB @ 32K
+    ratio: '省 28.4× 显存',
+    desc: '<strong>DeepSeek-V2 / V3 / V4 杀手锏：</strong>不简单减少 KV 头数，而是把所有 K 和 V 联合低秩压缩成极小的潜向量 <code>c_KV (512维) + RoPE (64维)</code> 存入缓存！推理时用<strong>矩阵吸收</strong>技巧免显式解压，比 GQA 更省显存且表达力反而超越标准 MHA！'
+  },
+  mqa: {
+    name: 'MQA（多查询全共享 64:1）',
+    short: 'MQA (64:1)',
+    color: '#fbbf24',
+    bytesPerTok: 2 * 80 * 1 * 128 * 2, // 0.039 MB/tok -> 1.25 GB @ 32K
+    ratio: '省 64× 显存',
+    desc: '<strong>PaLM / StarCoder 早期方案：</strong>所有 64 个 Q 头极端地共享仅 <strong>1 组</strong> K、V 头。显存极小、推理飞快，但在超大规模模型上表达力与训练稳定性不及 GQA 和 MLA。'
+  }
+};
+
+function renderEvoSvg(type) {
+  const svg = document.getElementById('evoSvg');
+  // Draw 8 Q heads on top (representing 64 Q heads conceptually)
+  let qBoxes = '';
+  const qX = i => 42 + i * 64;
+  for (let i = 0; i < 8; i++) {
+    qBoxes += `
+      <rect x="${qX(i)-22}" y="20" width="44" height="32" rx="7" fill="rgba(251,191,36,0.2)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="${qX(i)}" y="41" fill="#fef3c7" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">Q${i+1}</text>
+    `;
+  }
+
+  let body = '';
+  if (type === 'mha') {
+    for (let i = 0; i < 8; i++) {
+      const x = qX(i);
+      body += `
+        <line x1="${x}" y1="52" x2="${x}" y2="122" stroke="#fb7185" stroke-width="1.8"/>
+        <rect x="${x-22}" y="122" width="44" height="28" rx="6" fill="rgba(251,113,133,0.2)" stroke="#fb7185"/>
+        <text x="${x}" y="140" fill="#ffe4e6" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">K${i+1}</text>
+        <rect x="${x-22}" y="158" width="44" height="28" rx="6" fill="rgba(251,113,133,0.2)" stroke="#fb7185"/>
+        <text x="${x}" y="176" fill="#ffe4e6" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">V${i+1}</text>
+      `;
+    }
+    body += `<text x="270" y="226" fill="#fb7185" font-size="12.5" font-weight="700" text-anchor="middle">每个 Q 独享 1 组 K, V → KV Cache 体积巨大（100%）</text>`;
+  } else if (type === 'mqa') {
+    const cx = 270;
+    for (let i = 0; i < 8; i++) {
+      body += `<line x1="${qX(i)}" y1="52" x2="${cx}" y2="132" stroke="#fbbf24" stroke-width="1.5" opacity="0.75"/>`;
+    }
+    body += `
+      <rect x="${cx-44}" y="132" width="88" height="30" rx="7" fill="rgba(251,191,36,0.22)" stroke="#fbbf24" stroke-width="1.8"/>
+      <text x="${cx}" y="151" fill="#fef3c7" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">唯一 K₁</text>
+      <rect x="${cx-44}" y="170" width="88" height="30" rx="7" fill="rgba(251,191,36,0.22)" stroke="#fbbf24" stroke-width="1.8"/>
+      <text x="${cx}" y="189" fill="#fef3c7" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">唯一 V₁</text>
+      <text x="270" y="232" fill="#fbbf24" font-size="12.5" font-weight="700" text-anchor="middle">所有 Q 挤用同一组 K, V → 极省显存但易损失表达精度</text>
+    `;
+  } else if (type === 'gqa') {
+    // 2 groups (representing 8 groups in 64:8) -> 4 Qs per group
+    const groups = [qX(1.5), qX(5.5)];
+    groups.forEach((gx, gIdx) => {
+      for (let j = 0; j < 4; j++) {
+        const qi = gIdx * 4 + j;
+        body += `<line x1="${qX(qi)}" y1="52" x2="${gx}" y2="128" stroke="#38bdf8" stroke-width="1.7" opacity="0.8"/>`;
+      }
+      body += `
+        <rect x="${gx-48}" y="128" width="96" height="30" rx="7" fill="rgba(56,189,248,0.22)" stroke="#38bdf8" stroke-width="1.8"/>
+        <text x="${gx}" y="147" fill="#e0f2fe" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">共享 K_组${gIdx+1}</text>
+        <rect x="${gx-48}" y="166" width="96" height="30" rx="7" fill="rgba(56,189,248,0.22)" stroke="#38bdf8" stroke-width="1.8"/>
+        <text x="${gx}" y="185" fill="#e0f2fe" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">共享 V_组${gIdx+1}</text>
+      `;
+    });
+    body += `<text x="270" y="232" fill="#38bdf8" font-size="12.5" font-weight="700" text-anchor="middle">分组共享 K, V → 精度逼近 MHA，显存直降 4×~8×</text>`;
+  } else if (type === 'mla') {
+    const cx = 270;
+    for (let i = 0; i < 8; i++) {
+      body += `<line x1="${qX(i)}" y1="52" x2="${cx}" y2="108" stroke="#34d399" stroke-width="1.5" opacity="0.75"/>`;
+    }
+    body += `
+      <rect x="${cx-118}" y="106" width="236" height="34" rx="8" fill="rgba(167,139,250,0.2)" stroke="#a78bfa" stroke-width="1.6" stroke-dasharray="4 3"/>
+      <text x="${cx}" y="127" fill="#ede9fe" font-size="11.5" font-weight="700" text-anchor="middle">矩阵吸收 (W_UK 并入 W_Q，免解压！)</text>
+      <line x1="${cx}" y1="140" x2="${cx}" y2="164" stroke="#34d399" stroke-width="2.2"/>
+      <rect x="${cx-110}" y="164" width="220" height="40" rx="9" fill="rgba(52,211,153,0.22)" stroke="#34d399" stroke-width="2.2"/>
+      <text x="${cx}" y="183" fill="#fff" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">压缩潜向量 c_KV (512维)</text>
+      <text x="${cx}" y="198" fill="#a7f3d0" font-size="10.5" font-family="monospace" text-anchor="middle">+ 独立 RoPE 位置子向量 (64维)</text>
+      <text x="270" y="236" fill="#34d399" font-size="12.5" font-weight="700" text-anchor="middle">显存只存极小潜向量 → 省 28× 显存，且保留全多头表达力！</text>
+    `;
+  }
+
+  svg.innerHTML = qBoxes + body;
+  document.getElementById('evoDetail').innerHTML = EVO_SPECS[type].desc;
+}
+
+function renderMemCalculator() {
+  document.getElementById('ctxLenVal').textContent = `L = ${ctxLenK}K tokens`;
+  const tokens = ctxLenK * 1024;
+  const maxDisplayGB = Math.max(100, (EVO_SPECS.mha.bytesPerTok * tokens) / (1024 ** 3));
+  const h100Pct = Math.min(98, (80 / maxDisplayGB) * 100);
+
+  const keys = ['mha', 'gqa', 'mla', 'mqa'];
+  document.getElementById('memBars').innerHTML = keys.map(k => {
+    const spec = EVO_SPECS[k];
+    const gb = (spec.bytesPerTok * tokens) / (1024 ** 3);
+    const pct = Math.min(100, (gb / maxDisplayGB) * 100);
+    const oom = gb >= 80;
+    return `
+      <div class="mem-row ${selectedEvo === k ? 'selected' : ''}" onclick="selectEvoArch('${k}')">
+        <div class="mem-row-top">
+          <span style="color:${spec.color};">${spec.short} <span style="font-size:11px;font-weight:500;color:var(--text-dim);">(${spec.ratio})</span></span>
+          <span style="font-family:var(--font-mono);color:${oom ? 'var(--rose)' : '#fff'};">
+            ${gb.toFixed(gb < 10 ? 2 : 1)} GB ${oom ? '🔥 爆 80G 显卡!' : '✓'}
+          </span>
+        </div>
+        <div class="mem-track">
+          <div class="mem-fill" style="width:${Math.max(1.5, pct)}%;background:${spec.color};"></div>
+          <div class="h100-line" style="left:${h100Pct}%;" title="80GB H100 上限"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+window.selectEvoArch = key => {
+  selectedEvo = key;
+  document.querySelectorAll('#archEvoTabs .btn').forEach(b => b.classList.toggle('active', b.dataset.evo === key));
+  renderEvoSvg(key);
+  renderMemCalculator();
+};
+
+document.querySelectorAll('#archEvoTabs .btn').forEach(btn => {
+  btn.addEventListener('click', () => selectEvoArch(btn.dataset.evo));
+});
+document.getElementById('ctxSlider').addEventListener('input', e => {
+  ctxLenK = Number(e.target.value);
+  renderMemCalculator();
+});
+selectEvoArch('gqa');
+
+/* =========================================================
+   LAB 4: MODERN TRIO (RoPE / FlashAttention / QK-Norm)
+   ========================================================= */
+document.querySelectorAll('#modernTechTabs .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#modernTechTabs .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const t = btn.dataset.mt;
+    document.getElementById('paneRope').style.display = t === 'rope' ? 'block' : 'none';
+    document.getElementById('paneFlash').style.display = t === 'flash' ? 'block' : 'none';
+    document.getElementById('paneQkNorm').style.display = t === 'qknorm' ? 'block' : 'none';
+  });
+});
+
+/* --- TAB A: RoPE 2D Rotation Circle --- */
+let ropeM = 5, ropeN = 2;
+const THETA_DEG = 18; // rotation step per position
+const BASE_Q_DEG = 25, BASE_K_DEG = 5;
+
+function renderRoPE() {
+  document.getElementById('ropeMVal').textContent = `m = ${ropeM}`;
+  document.getElementById('ropeNVal').textContent = `n = ${ropeN}`;
+  document.getElementById('ropeMSlider').value = ropeM;
+  document.getElementById('ropeNSlider').value = ropeN;
+
+  const degQ = BASE_Q_DEG + ropeM * THETA_DEG;
+  const degK = BASE_K_DEG + ropeN * THETA_DEG;
+  const radQ = degQ * Math.PI / 180;
+  const radK = degK * Math.PI / 180;
+  const diffDeg = degQ - degK;
+  const dot = Math.cos(diffDeg * Math.PI / 180);
+
+  const cx = 170, cy = 155, r = 108;
+  const qx = cx + r * Math.cos(radQ), qy = cy - r * Math.sin(radQ);
+  const kx = cx + r * Math.cos(radK), ky = cy - r * Math.sin(radK);
+
+  // Small angle arc between K and Q
+  const arcR = 40;
+  const ax1 = cx + arcR * Math.cos(radK), ay1 = cy - arcR * Math.sin(radK);
+  const ax2 = cx + arcR * Math.cos(radQ), ay2 = cy - arcR * Math.sin(radQ);
+  const normDiff = ((diffDeg % 360) + 360) % 360;
+  const largeArc = normDiff > 180 ? 1 : 0;
+
+  document.getElementById('ropeSvg').innerHTML = `
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(148,163,184,0.22)" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <line x1="${cx-r-18}" y1="${cy}" x2="${cx+r+18}" y2="${cy}" stroke="rgba(148,163,184,0.16)" stroke-width="1"/>
+    <line x1="${cx}" y1="${cy-r-18}" x2="${cx}" y2="${cy+r+18}" stroke="rgba(148,163,184,0.16)" stroke-width="1"/>
+
+    <!-- Angle Arc -->
+    <path d="M ${ax1} ${ay1} A ${arcR} ${arcR} 0 ${largeArc} 0 ${ax2} ${ay2}" fill="none" stroke="#34d399" stroke-width="2.5"/>
+
+    <!-- Vector K -->
+    <line x1="${cx}" y1="${cy}" x2="${kx}" y2="${ky}" stroke="#38bdf8" stroke-width="3.2" stroke-linecap="round"/>
+    <circle cx="${kx}" cy="${ky}" r="6" fill="#38bdf8"/>
+    <text x="${cx + (r+24)*Math.cos(radK)}" y="${cy - (r+24)*Math.sin(radK) + 4}" fill="#38bdf8" font-size="12" font-family="monospace" font-weight="800" text-anchor="middle">k_${ropeN}</text>
+
+    <!-- Vector Q -->
+    <line x1="${cx}" y1="${cy}" x2="${qx}" y2="${qy}" stroke="#fbbf24" stroke-width="3.2" stroke-linecap="round"/>
+    <circle cx="${qx}" cy="${qy}" r="6" fill="#fbbf24"/>
+    <text x="${cx + (r+24)*Math.cos(radQ)}" y="${cy - (r+24)*Math.sin(radQ) + 4}" fill="#fbbf24" font-size="12" font-family="monospace" font-weight="800" text-anchor="middle">q_${ropeM}</text>
+
+    <circle cx="${cx}" cy="${cy}" r="4" fill="#fff"/>
+    <text x="${cx}" y="294" fill="#34d399" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">
+      相对距离 (m - n) = ${ropeM - ropeN}  ｜  夹角差 = ${diffDeg}°
+    </text>
+  `;
+
+  document.getElementById('ropeFormulaReadout').innerHTML =
+    `q_${ropeM} · k_${ropeN} = cos(20° + (${ropeM} - ${ropeN})×18°) = <strong style="color:#34d399;font-size:15px;">${dot.toFixed(4)}</strong>`;
+}
+
+document.getElementById('ropeMSlider').addEventListener('input', e => { ropeM = Number(e.target.value); renderRoPE(); });
+document.getElementById('ropeNSlider').addEventListener('input', e => { ropeN = Number(e.target.value); renderRoPE(); });
+document.getElementById('btnRopeShift').addEventListener('click', () => {
+  if (ropeM + 2 <= 16 && ropeN + 2 <= 16) { ropeM += 2; ropeN += 2; }
+  else { const diff = ropeM - ropeN; ropeN = Math.max(0, -diff); ropeM = ropeN + diff; }
+  renderRoPE();
+});
+document.getElementById('btnRopeReset').addEventListener('click', () => { ropeM = 5; ropeN = 2; renderRoPE(); });
+renderRoPE();
+
+/* --- TAB B: FlashAttention Tiling Animation --- */
+const FLASH_TILES = [];
+for (let r = 0; r < 4; r++) {
+  for (let c = 0; c <= r; c++) FLASH_TILES.push([r, c]); // 10 causal tiles
+}
+let flashIdx = 0;
+let flashTimer = null;
+
+function renderFlashTiles() {
+  const grid = document.getElementById('flashTileGrid');
+  const activeTile = flashIdx < FLASH_TILES.length ? FLASH_TILES[flashIdx] : null;
+
+  let html = `<div class="tile-head">Q\\K</div>`;
+  for (let c = 0; c < 4; c++) html += `<div class="tile-head" style="${activeTile && activeTile[1]===c ? 'color:var(--cyan);font-weight:800;' : ''}">K_${c+1},V_${c+1}</div>`;
+
+  for (let r = 0; r < 4; r++) {
+    html += `<div class="tile-head" style="display:flex;align-items:center;justify-content:center;${activeTile && activeTile[0]===r ? 'color:var(--amber);font-weight:800;' : ''}">Q_${r+1}</div>`;
+    for (let c = 0; c < 4; c++) {
+      if (c > r) {
+        html += `<div class="tile-cell skipped">跳过</div>`;
+      } else {
+        const order = FLASH_TILES.findIndex(t => t[0] === r && t[1] === c);
+        const cls = order < flashIdx ? 'done' : (order === flashIdx ? 'running' : '');
+        const lbl = order < flashIdx ? '完成 ✓' : (order === flashIdx ? 'SRAM中⚡' : `块(${r+1},${c+1})`);
+        html += `<div class="tile-cell ${cls}">${lbl}</div>`;
+      }
+    }
+  }
+  grid.innerHTML = html;
+
+  const mon = document.getElementById('sramMonitor');
+  if (activeTile) {
+    const [r, c] = activeTile;
+    mon.innerHTML = `<span style="color:var(--amber);">⚡ 片上 SRAM 正在执行 Tile (${r+1}, ${c+1}) [${flashIdx+1}/10]：</span><br/>` +
+      `1. 搬入小块 Q_${r+1} 与 K_${c+1}, V_${c+1}（仅数 KB）<br/>` +
+      `2. 片上现算局部点积，<strong>Online Softmax</strong> 更新 running max m_${r+1} 与局部输出 O_${r+1}<br/>` +
+      `3. 算完立刻丢弃局部权重，<strong>HBM 中全程 0 字节分配 L×L 矩阵！</strong>`;
+  } else {
+    mon.innerHTML = `<span style="color:var(--emerald);">✅ 全部 10 个有效分块在片上 SRAM 流式计算完毕！</span><br/>仅将最终结果 O₁~O₄ 写回 HBM，跳过右上角 6 块未来因果区，显存严格 O(L)！`;
+  }
+}
+
+function stepFlash() {
+  if (flashIdx < FLASH_TILES.length) { flashIdx++; renderFlashTiles(); }
+  else { stopFlashPlay(); }
+}
+function stopFlashPlay() {
+  if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+  document.getElementById('btnFlashPlay').textContent = '▶ 自动播放';
+}
+document.getElementById('btnFlashStep').addEventListener('click', () => { stopFlashPlay(); stepFlash(); });
+document.getElementById('btnFlashReset').addEventListener('click', () => { stopFlashPlay(); flashIdx = 0; renderFlashTiles(); });
+document.getElementById('btnFlashPlay').addEventListener('click', () => {
+  if (flashTimer) { stopFlashPlay(); return; }
+  if (flashIdx >= FLASH_TILES.length) flashIdx = 0;
+  document.getElementById('btnFlashPlay').textContent = '⏸ 暂停';
+  renderFlashTiles();
+  flashTimer = setInterval(() => {
+    if (flashIdx >= FLASH_TILES.length) { stopFlashPlay(); return; }
+    flashIdx++;
+    renderFlashTiles();
+  }, 650);
+});
+renderFlashTiles();
+
+/* --- TAB C: QK-Norm Visualizer --- */
+function renderQkNorm(enabled) {
+  const viz = document.getElementById('qkNormViz');
+  const rows = enabled
+    ? [
+        { tok: '小猫', score: 3.1, prob: 58, col: '#34d399' },
+        { tok: '跳上', score: 2.3, prob: 26, col: '#38bdf8' },
+        { tok: '桌子', score: 1.5, prob: 12, col: '#a78bfa' },
+        { tok: '因为', score: 0.4, prob: 4,  col: '#94a3b8' }
+      ]
+    : [
+        { tok: '小猫', score: 94.8, prob: 100.0, col: '#fb7185' },
+        { tok: '跳上', score: 42.1, prob: 0.0,   col: '#475569' },
+        { tok: '桌子', score: 18.5, prob: 0.0,   col: '#475569' },
+        { tok: '因为', score: -12.3, prob: 0.0,  col: '#475569' }
+      ];
+
+  viz.innerHTML = rows.map(r => `
+    <div style="display:grid;grid-template-columns:56px 96px 1fr 56px;align-items:center;gap:10px;margin-bottom:8px;font-size:12.5px;">
+      <strong>「${r.tok}」</strong>
+      <span style="font-family:var(--font-mono);color:${enabled ? 'var(--emerald)' : 'var(--rose)'};">qk=${r.score}</span>
+      <div style="height:10px;background:rgba(255,255,255,0.06);border-radius:999px;overflow:hidden;">
+        <div style="width:${Math.max(1, r.prob)}%;height:100%;background:${r.col};border-radius:999px;transition:width .3s;"></div>
+      </div>
+      <span style="font-family:var(--font-mono);text-align:right;">${r.prob}%</span>
+    </div>
+  `).join('') + (enabled
+    ? `<div class="callout-emerald" style="margin-top:10px;"><strong>✅ 开启 QK-Norm：</strong>点积分数稳稳落在 [-5, +5] 健康区间，Softmax 梯度充沛，可无压力训练上百层超大模型！</div>`
+    : `<div class="callout-amber" style="border-left-color:var(--rose);background:var(--rose-soft);color:#ffe4e6;margin-top:10px;"><strong>⚠️ 关闭 QK-Norm：</strong>深层 Q、K 模长失控导致点积飙到 94.8 → Softmax 坍塌为 <code>[100%, 0%, 0%, 0%]</code>，梯度归零甚至触发 NaN 崩盘！</div>`);
+}
+
+document.querySelectorAll('#qkNormToggle .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#qkNormToggle .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderQkNorm(btn.dataset.qkn === 'on');
+  });
+});
+renderQkNorm(true);
+
+/* =========================================================
+   SECTION 5: INTERACTIVE CODE EXPLORER
+   ========================================================= */
+function selectCodeBlock(id) {
+  document.querySelectorAll('#codePanel .code-block').forEach(el => {
+    el.classList.toggle('hl', el.dataset.cb === String(id));
+  });
+  document.querySelectorAll('#codeNav .code-nav-btn').forEach(el => {
+    el.classList.toggle('active', el.dataset.cb === String(id));
+  });
+}
+
+document.querySelectorAll('#codeNav .code-nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => selectCodeBlock(btn.dataset.cb));
+});
+document.querySelectorAll('#codePanel .code-block').forEach(blk => {
+  blk.addEventListener('click', () => {
+    if (blk.dataset.cb !== '0') selectCodeBlock(blk.dataset.cb);
+  });
+});
+</script>
+</body>
+</html>
