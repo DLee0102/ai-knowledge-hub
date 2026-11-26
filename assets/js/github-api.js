@@ -233,14 +233,35 @@ export async function commitAtomicChanges(cfg, { upserts = [], deletes = [], mes
       });
     }
 
-    // 4. Mark deleted files with sha: null
-    for (const delPath of deletes) {
-      treeEntries.push({
-        path: delPath.replace(/^\/+/, ""),
-        mode: "100644",
-        type: "blob",
-        sha: null,
-      });
+    // 4. Mark deleted files with sha: null (verify against base_tree so already-deleted paths never cause 422)
+    const normalizedDeletes = Array.from(
+      new Set(deletes.map((p) => String(p || "").replace(/^\/+/, "")).filter(Boolean))
+    );
+    if (normalizedDeletes.length > 0) {
+      let existingPaths = null;
+      try {
+        const treeData = await githubFetch(
+          cfg,
+          `${repoBase}/git/trees/${baseTreeSha}?recursive=1`
+        );
+        if (!treeData.truncated && Array.isArray(treeData.tree)) {
+          existingPaths = new Set(
+            treeData.tree.filter((t) => t.type === "blob").map((t) => t.path)
+          );
+        }
+      } catch {
+        existingPaths = null;
+      }
+
+      for (const delPath of normalizedDeletes) {
+        if (existingPaths && !existingPaths.has(delPath)) continue;
+        treeEntries.push({
+          path: delPath,
+          mode: "100644",
+          type: "blob",
+          sha: null,
+        });
+      }
     }
 
     // 5. Create new tree

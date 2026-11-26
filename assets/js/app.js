@@ -33,6 +33,7 @@ import {
   renderTagCloud,
   renderActiveFilters,
   renderArticlesGrid,
+  renderBatchDeleteList,
   renderUploadQueue,
   highlightInIframe,
   scrollIframeToHeading,
@@ -76,6 +77,10 @@ const state = {
 
   uploadQueue: [],
   editingArticleId: null,
+
+  selectionMode: false,
+  selectedIds: new Set(),
+  lastVisibleIds: [],
 };
 
 // ============================================================================
@@ -356,6 +361,14 @@ function renderAll() {
     favorites: state.favorites,
     sortBy: state.sortBy,
   });
+
+  // Prune any selected IDs that no longer exist
+  const existingIdSet = new Set(state.articles.map((a) => a.id));
+  for (const sid of Array.from(state.selectedIds)) {
+    if (!existingIdSet.has(sid)) state.selectedIds.delete(sid);
+  }
+  state.lastVisibleIds = results.map((r) => r.article.id);
+  updateBatchBarUI();
 
   const summaryEl = document.getElementById("resultSummary");
   if (state.query.trim()) {
@@ -1108,6 +1121,235 @@ async function deleteArticleById(id) {
 }
 
 // ============================================================================
+// Batch Selection & Batch Delete
+// ============================================================================
+
+function setSelectionMode(active) {
+  state.selectionMode = Boolean(active);
+  if (!state.selectionMode) {
+    state.selectedIds.clear();
+  }
+  renderAll();
+}
+
+function toggleCardSelection(id) {
+  if (!id) return;
+  if (state.selectedIds.has(id)) {
+    state.selectedIds.delete(id);
+  } else {
+    state.selectedIds.add(id);
+  }
+  renderAll();
+}
+
+function selectAllVisible() {
+  if (!state.lastVisibleIds.length) return;
+  const allVisibleSelected = state.lastVisibleIds.every((id) => state.selectedIds.has(id));
+  if (allVisibleSelected) {
+    for (const id of state.lastVisibleIds) state.selectedIds.delete(id);
+  } else {
+    for (const id of state.lastVisibleIds) state.selectedIds.add(id);
+  }
+  renderAll();
+}
+
+function invertVisibleSelection() {
+  for (const id of state.lastVisibleIds) {
+    if (state.selectedIds.has(id)) {
+      state.selectedIds.delete(id);
+    } else {
+      state.selectedIds.add(id);
+    }
+  }
+  renderAll();
+}
+
+function clearSelection() {
+  state.selectedIds.clear();
+  renderAll();
+}
+
+function getSelectedArticles() {
+  return state.articles.filter((a) => state.selectedIds.has(a.id));
+}
+
+function updateBatchBarUI() {
+  const toggleBtn = document.getElementById("toggleSelectModeBtn");
+  const toggleLabel = document.getElementById("toggleSelectModeLabel");
+  const bar = document.getElementById("batchActionBar");
+
+  toggleBtn.classList.toggle("active", state.selectionMode);
+  toggleLabel.textContent = state.selectionMode ? "退出批量" : "批量管理";
+  bar.classList.toggle("hidden", !state.selectionMode);
+
+  if (!state.selectionMode) return;
+
+  const selected = getSelectedArticles();
+  const count = selected.length;
+  const localCount = selected.filter((a) => a._source === "local").length;
+  const remoteCount = count - localCount;
+
+  document.getElementById("batchSelectedCount").textContent = `已选 ${count} 篇`;
+  const breakdownParts = [];
+  if (remoteCount > 0) breakdownParts.push(`GitHub 云端 ${remoteCount} 篇`);
+  if (localCount > 0) breakdownParts.push(`本地暂存 ${localCount} 篇`);
+  document.getElementById("batchBreakdown").textContent = breakdownParts.length
+    ? `（${breakdownParts.join("，")}）`
+    : "点击下方知识点卡片勾选";
+
+  const selectAllBtn = document.getElementById("batchSelectAllBtn");
+  const allVisibleSelected =
+    state.lastVisibleIds.length > 0 &&
+    state.lastVisibleIds.every((id) => state.selectedIds.has(id));
+  selectAllBtn.textContent = allVisibleSelected
+    ? `取消全选 (${state.lastVisibleIds.length})`
+    : `全选当前结果 (${state.lastVisibleIds.length})`;
+  selectAllBtn.disabled = state.lastVisibleIds.length === 0;
+
+  document.getElementById("batchInvertBtn").disabled = state.lastVisibleIds.length === 0;
+  document.getElementById("batchClearBtn").disabled = count === 0;
+
+  const delBtn = document.getElementById("batchDeleteBtn");
+  delBtn.disabled = count === 0;
+  document.getElementById("batchDeleteBtnLabel").textContent =
+    count > 0 ? `删除所选 (${count})` : "删除所选";
+}
+
+function openBatchDeleteModal() {
+  const selected = getSelectedArticles();
+  if (!selected.length) return;
+
+  const localItems = selected.filter((a) => a._source === "local");
+  const remoteItems = selected.filter((a) => a._source !== "local");
+
+  if (remoteItems.length > 0 && !isConfigured(state.githubConfig)) {
+    showToast("所选包含 GitHub 云端知识点，请先配置具有写入权限的 GitHub Token。", "info", 4200);
+    openSettingsModal();
+    return;
+  }
+
+  document.getElementById("batchDeleteSubtitle").textContent = `即将删除 ${selected.length} 篇 HTML 知识点`;
+
+  const alertParts = [];
+  if (remoteItems.length > 0) {
+    alertParts.push(`${remoteItems.length} 篇将从 GitHub 仓库永久删除`);
+  }
+  if (localItems.length > 0) {
+    alertParts.push(`${localItems.length} 篇将从浏览器本地暂存移除`);
+  }
+  document.getElementById("batchDeleteSummaryAlert").textContent =
+    `确认操作：${alertParts.join("；")}。`;
+
+  renderBatchDeleteList(document.getElementById("batchDeleteList"), selected);
+
+  const footerNote = document.getElementById("batchDeleteFooterNote");
+  footerNote.textContent =
+    remoteItems.length > 0
+      ? `目标仓库：${state.githubConfig.owner}/${state.githubConfig.repo}@${state.githubConfig.branch}`
+      : "仅影响当前浏览器本地暂存数据";
+
+  const confirmBtn = document.getElementById("confirmBatchDeleteBtn");
+  confirmBtn.disabled = false;
+  confirmBtn.textContent = `确认批量删除 (${selected.length})`;
+
+  openModal("batchDeleteModal");
+}
+
+async function confirmBatchDelete() {
+  const selected = getSelectedArticles();
+  if (!selected.length) {
+    closeModal("batchDeleteModal");
+    return;
+  }
+
+  const localItems = selected.filter((a) => a._source === "local");
+  const remoteItems = selected.filter((a) => a._source !== "local");
+
+  if (remoteItems.length > 0 && !isConfigured(state.githubConfig)) {
+    showToast("删除云端知识点需要先配置 GitHub Token。", "info", 3800);
+    closeModal("batchDeleteModal");
+    openSettingsModal();
+    return;
+  }
+
+  const confirmBtn = document.getElementById("confirmBatchDeleteBtn");
+  const cancelBtn = document.getElementById("cancelBatchDeleteBtn");
+  confirmBtn.disabled = true;
+  cancelBtn.disabled = true;
+  confirmBtn.textContent = `正在删除 (${selected.length})…`;
+
+  try {
+    // 1. Delete remote articles in ONE atomic GitHub commit
+    if (remoteItems.length > 0) {
+      const remotePathSet = new Set(remoteItems.map((a) => a.path));
+      const remoteIndex = await fetchRemoteIndex(state.githubConfig);
+      const remaining = (remoteIndex?.articles || state.remoteArticles).filter(
+        (a) => !remotePathSet.has(a.path)
+      );
+      const newIndexPayload = buildIndexPayload(remaining);
+
+      await commitAtomicChanges(state.githubConfig, {
+        upserts: [
+          {
+            path: "data/index.json",
+            content: JSON.stringify(newIndexPayload, null, 2) + "\n",
+          },
+        ],
+        deletes: Array.from(remotePathSet),
+        message: `chore(knowledge): batch remove ${remoteItems.length} AI knowledge HTML file(s)`,
+      });
+
+      state.remoteArticles = newIndexPayload.articles;
+      state.remoteIndexMeta.generatedAt = newIndexPayload.generatedAt;
+
+      // Write deletion tombstones so stale Pages CDN index doesn't resurrect deleted files
+      for (const art of remoteItems) {
+        await storage.putArticleRecord({
+          id: art.id,
+          path: art.path,
+          html: "",
+          metadata: null,
+          status: "synced-cache",
+          deleted: true,
+        });
+      }
+    }
+
+    // 2. Delete local staged articles from IndexedDB
+    for (const art of localItems) {
+      await storage.deleteArticleRecord(art.id);
+    }
+
+    // 3. Clean up favorites & selection state
+    for (const art of selected) {
+      state.favorites.delete(art.id);
+      state.selectedIds.delete(art.id);
+    }
+    storage.setFavorites(state.favorites);
+
+    state.localRecords = await storage.getAllArticleRecords();
+    await reconcileAndMergeArticles();
+    state.selectionMode = false;
+    closeModal("batchDeleteModal");
+    renderAll();
+
+    showToast(
+      `已成功批量删除 ${selected.length} 篇 HTML 知识点${
+        remoteItems.length > 0 ? "（已单次原子提交至 GitHub，Pages 将自动更新）" : ""
+      }！`,
+      "success",
+      4800
+    );
+  } catch (err) {
+    showToast(`批量删除失败：${err.message}`, "error", 5500);
+  } finally {
+    confirmBtn.disabled = false;
+    cancelBtn.disabled = false;
+    confirmBtn.textContent = `确认批量删除 (${state.selectedIds.size})`;
+  }
+}
+
+// ============================================================================
 // GitHub Settings Modal & Remote Maintenance
 // ============================================================================
 
@@ -1398,11 +1640,32 @@ function bindEvents() {
     }
   });
 
+  // Batch management actions
+  document.getElementById("toggleSelectModeBtn").addEventListener("click", () => {
+    setSelectionMode(!state.selectionMode);
+  });
+  document.getElementById("batchSelectAllBtn").addEventListener("click", selectAllVisible);
+  document.getElementById("batchInvertBtn").addEventListener("click", invertVisibleSelection);
+  document.getElementById("batchClearBtn").addEventListener("click", clearSelection);
+  document.getElementById("batchDeleteBtn").addEventListener("click", openBatchDeleteModal);
+  document.getElementById("batchExitBtn").addEventListener("click", () => setSelectionMode(false));
+  document.getElementById("confirmBatchDeleteBtn").addEventListener("click", confirmBatchDelete);
+
   // Sync local drafts banner
   document.getElementById("syncAllLocalBtn").addEventListener("click", syncAllLocalToGitHub);
 
   // Cards click delegation
   document.getElementById("articlesContainer").addEventListener("click", (e) => {
+    const card = e.target.closest("[data-article-id]");
+
+    if (state.selectionMode) {
+      if (card) {
+        e.preventDefault();
+        toggleCardSelection(card.dataset.articleId);
+      }
+      return;
+    }
+
     const favBtn = e.target.closest("[data-card-fav]");
     if (favBtn) {
       e.stopPropagation();
@@ -1415,13 +1678,18 @@ function bindEvents() {
       openEditModal(editBtn.dataset.cardEdit);
       return;
     }
+    const deleteBtn = e.target.closest("[data-card-delete]");
+    if (deleteBtn) {
+      e.stopPropagation();
+      deleteArticleById(deleteBtn.dataset.cardDelete);
+      return;
+    }
     const tagBtn = e.target.closest("[data-card-tag]");
     if (tagBtn) {
       e.stopPropagation();
       toggleSelectedTag(tagBtn.dataset.cardTag);
       return;
     }
-    const card = e.target.closest("[data-article-id]");
     if (card) {
       navigateToArticle(card.dataset.articleId);
     }
@@ -1687,6 +1955,10 @@ function bindEvents() {
         } else {
           navigateHome();
         }
+        return;
+      }
+      if (state.selectionMode) {
+        setSelectionMode(false);
         return;
       }
       if (document.activeElement === searchInput && searchInput.value) {

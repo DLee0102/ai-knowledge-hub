@@ -154,12 +154,15 @@ export function renderArticlesGrid(container, searchResults, state) {
   container.className = state.viewMode === "list" ? "cards-list" : "cards-grid";
 
   const selectedTagSet = new Set(state.selectedTags);
+  const selectionMode = Boolean(state.selectionMode);
+  const selectedIds = state.selectedIds || new Set();
 
   container.innerHTML = searchResults
     .map((item) => {
       const a = item.article;
       const color = getCategoryColor(a.category, state.siteConfig);
       const isFav = state.favorites.has(a.id);
+      const isSelected = selectionMode && selectedIds.has(a.id);
       const titleHtml = item.terms.length ? highlightText(a.title, item.terms) : escapeHtml(a.title);
       const bodyHtml = item.snippetHtml || escapeHtml(a.summary || "点击查看完整 HTML 知识点内容");
 
@@ -186,22 +189,43 @@ export function renderArticlesGrid(container, searchResults, state) {
         .join("");
 
       const headingCount = (a.headings || []).length;
+      const cardClasses = [
+        "article-card",
+        selectionMode ? "selectable" : "",
+        isSelected ? "selected" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      const checkboxHtml = selectionMode
+        ? `<span class="card-checkbox" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </span>`
+        : "";
+
+      const actionsHtml = selectionMode
+        ? ""
+        : `<div class="card-top-actions">
+            <button class="card-action-btn ${isFav ? "fav-active" : ""}" data-card-fav="${escapeHtml(a.id)}" title="${isFav ? "取消收藏" : "收藏"}" type="button">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            </button>
+            <button class="card-action-btn" data-card-edit="${escapeHtml(a.id)}" title="编辑元信息" type="button">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="card-action-btn danger" data-card-delete="${escapeHtml(a.id)}" title="删除此 HTML 知识点" type="button">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+            </button>
+          </div>`;
 
       return `
-        <article class="article-card" data-article-id="${escapeHtml(a.id)}" style="--card-accent:${color}">
+        <article class="${cardClasses}" data-article-id="${escapeHtml(a.id)}" style="--card-accent:${color}" ${selectionMode ? `role="checkbox" aria-checked="${isSelected ? "true" : "false"}"` : ""}>
           <div class="card-top">
             <div class="card-badges">
+              ${checkboxHtml}
               <span class="cat-badge" style="--badge-color:${color}">${escapeHtml(a.category)}</span>
               ${statusBadge}
             </div>
-            <div class="card-top-actions">
-              <button class="card-action-btn ${isFav ? "fav-active" : ""}" data-card-fav="${escapeHtml(a.id)}" title="${isFav ? "取消收藏" : "收藏"}" type="button">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              </button>
-              <button class="card-action-btn" data-card-edit="${escapeHtml(a.id)}" title="编辑元信息" type="button">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-              </button>
-            </div>
+            ${actionsHtml}
           </div>
 
           <h3 class="card-title">${titleHtml}</h3>
@@ -219,6 +243,29 @@ export function renderArticlesGrid(container, searchResults, state) {
             <span title="更新时间">${formatDate(a.updatedAt || a.createdAt)}</span>
           </div>
         </article>
+      `;
+    })
+    .join("");
+}
+
+/**
+ * Render list of articles queued for batch deletion inside confirmation modal.
+ */
+export function renderBatchDeleteList(container, articles) {
+  container.innerHTML = articles
+    .map((a) => {
+      const sourcePill =
+        a._source === "local"
+          ? `<span class="source-pill">本地暂存</span>`
+          : `<span class="source-pill synced">GitHub</span>`;
+      return `
+        <div class="delete-preview-item">
+          <div class="delete-preview-info">
+            <strong title="${escapeHtml(a.title)}">${escapeHtml(a.title)}</strong>
+            <code>${escapeHtml(a.path)}</code>
+          </div>
+          ${sourcePill}
+        </div>
       `;
     })
     .join("");

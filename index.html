@@ -146,6 +146,10 @@
           <div class="active-filters" id="activeFilters"></div>
         </div>
         <div class="toolbar-right">
+          <button class="btn btn-ghost btn-sm" id="toggleSelectModeBtn" title="进入批量管理模式（支持多选批量删除）">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span id="toggleSelectModeLabel">批量管理</span>
+          </button>
           <button class="btn btn-ghost btn-sm" id="refreshIndexBtn" title="刷新或从 GitHub 拉取最新索引">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
             <span>同步</span>
@@ -164,6 +168,26 @@
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- Batch Management Action Bar -->
+      <div class="batch-bar hidden" id="batchActionBar" role="region" aria-label="批量操作栏">
+        <div class="batch-bar-left">
+          <strong class="batch-count" id="batchSelectedCount">已选 0 篇</strong>
+          <span class="batch-breakdown" id="batchBreakdown"></span>
+          <div class="batch-select-btns">
+            <button type="button" class="btn btn-ghost btn-sm" id="batchSelectAllBtn">全选当前结果</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="batchInvertBtn">反选</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="batchClearBtn">清空</button>
+          </div>
+        </div>
+        <div class="batch-bar-right">
+          <button type="button" class="btn btn-danger btn-sm" id="batchDeleteBtn" disabled>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            <span id="batchDeleteBtnLabel">删除所选</span>
+          </button>
+          <button type="button" class="btn btn-ghost btn-sm" id="batchExitBtn">退出</button>
         </div>
       </div>
 
@@ -467,6 +491,33 @@
         <div class="footer-actions">
           <button class="btn btn-ghost" data-close-modal="settingsModal">关闭</button>
           <button class="btn btn-primary" id="saveSettingsBtn">保存配置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Delete Confirmation Modal -->
+  <div class="modal-overlay hidden" id="batchDeleteModal" role="dialog" aria-modal="true" aria-labelledby="batchDeleteModalTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 id="batchDeleteModalTitle">确认批量删除 HTML 知识点</h2>
+          <p class="modal-subtitle" id="batchDeleteSubtitle">请核对以下即将删除的文件列表</p>
+        </div>
+        <button class="icon-btn" data-close-modal="batchDeleteModal" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="alert error" id="batchDeleteSummaryAlert"></div>
+        <div class="delete-preview-list" id="batchDeleteList"></div>
+        <p class="field-hint" style="margin:12px 0 0">
+          提示：云端文件将在<strong>单次原子 Commit</strong> 中全部移除并同步更新 <code>data/index.json</code>；如需误删找回，仍可在 GitHub 仓库的 Commit 历史中恢复。
+        </p>
+      </div>
+      <div class="modal-footer">
+        <div class="footer-note" id="batchDeleteFooterNote"></div>
+        <div class="footer-actions">
+          <button type="button" class="btn btn-ghost" data-close-modal="batchDeleteModal" id="cancelBatchDeleteBtn">取消</button>
+          <button type="button" class="btn btn-danger" id="confirmBatchDeleteBtn">确认批量删除</button>
         </div>
       </div>
     </div>
