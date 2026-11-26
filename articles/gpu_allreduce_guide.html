@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>深入图解 GPU 间 AllReduce 通信：Ring 算法与大模型实战</title>
+<style>
+  :root {
+    --bg: #080c16;
+    --bg-elev: #0f1626;
+    --card: #131c31;
+    --border: rgba(148, 163, 184, 0.16);
+    --border-strong: rgba(148, 163, 184, 0.34);
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+
+    --cyan: #38bdf8;
+    --cyan-soft: rgba(56, 189, 248, 0.14);
+    --emerald: #34d399;
+    --emerald-soft: rgba(52, 211, 153, 0.14);
+    --violet: #a78bfa;
+    --violet-soft: rgba(167, 139, 250, 0.15);
+    --amber: #fbbf24;
+    --amber-soft: rgba(251, 191, 36, 0.14);
+    --rose: #fb7185;
+    --rose-soft: rgba(251, 113, 133, 0.14);
+
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-sans);
+    background:
+      radial-gradient(ellipse 80% 50% at 15% -10%, rgba(56, 189, 248, 0.13), transparent 60%),
+      radial-gradient(ellipse 75% 50% at 85% 0%, rgba(52, 211, 153, 0.11), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .noscript-bar {
+    background: #7f1d1d; color: #fecaca; padding: 14px 20px;
+    text-align: center; font-size: 14px; font-weight: 600;
+    border-bottom: 1px solid #ef4444;
+  }
+
+  /* Navbar */
+  .navbar {
+    position: sticky; top: 0; z-index: 100;
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    background: rgba(8, 12, 22, 0.82);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1200px; margin: 0 auto; padding: 12px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; flex-wrap: wrap;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 15px; color: var(--text); text-decoration: none;
+  }
+  .brand-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--cyan), var(--emerald));
+    box-shadow: 0 0 12px var(--cyan);
+  }
+  .nav-links { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .nav-links a {
+    text-decoration: none; color: var(--text-muted); font-size: 13px; font-weight: 500;
+    padding: 6px 12px; border-radius: 999px; transition: all 0.2s; border: 1px solid transparent;
+  }
+  .nav-links a:hover { color: var(--text); background: rgba(255,255,255,0.06); border-color: var(--border); }
+  .status-pill {
+    font-size: 11.5px; font-family: var(--font-mono); padding: 4px 10px;
+    border-radius: 999px; background: var(--amber-soft); color: var(--amber);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+  }
+  .status-pill.ok {
+    background: var(--emerald-soft); color: var(--emerald);
+    border-color: rgba(52, 211, 153, 0.38);
+  }
+
+  /* Layout */
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* Hero */
+  .hero { padding: 56px 0 36px; text-align: center; }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    color: var(--cyan); background: var(--cyan-soft);
+    border: 1px solid rgba(56, 189, 248, 0.35); margin-bottom: 18px;
+  }
+  .hero h1 {
+    font-size: clamp(27px, 4.2vw, 44px);
+    font-weight: 800; letter-spacing: -0.02em; line-height: 1.22; margin-bottom: 14px;
+    background: linear-gradient(135deg, #ffffff 10%, #7dd3fc 52%, #6ee7b7 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .hero p { max-width: 800px; margin: 0 auto 24px; font-size: 15.5px; color: var(--text-muted); }
+  .pill-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    font-size: 12px; font-family: var(--font-mono); padding: 5px 12px; border-radius: 8px;
+    background: var(--bg-elev); border: 1px solid var(--border); color: var(--text-muted);
+  }
+
+  /* Sections */
+  section { margin-top: 56px; scroll-margin-top: 76px; }
+  .section-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 10px; }
+  .section-num {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+    color: var(--cyan); background: var(--cyan-soft);
+    border: 1px solid rgba(56, 189, 248, 0.35); padding: 3px 10px; border-radius: 999px;
+  }
+  .section-head h2 { font-size: clamp(21px, 2.5vw, 28px); font-weight: 700; letter-spacing: -0.01em; }
+  .section-desc { color: var(--text-muted); font-size: 15px; max-width: 920px; margin-bottom: 22px; }
+
+  /* Cards & Tags */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow);
+  }
+  .card + .card { margin-top: 20px; }
+  .card-sub {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 18px;
+  }
+  .card-title {
+    font-size: 16px; font-weight: 700; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .tag {
+    font-size: 11px; font-family: var(--font-mono);
+    padding: 2px 8px; border-radius: 999px; font-weight: 600;
+  }
+  .tag-cyan { background: var(--cyan-soft); color: var(--cyan); border: 1px solid rgba(56,189,248,0.32); }
+  .tag-emerald { background: var(--emerald-soft); color: var(--emerald); border: 1px solid rgba(52,211,153,0.32); }
+  .tag-violet { background: var(--violet-soft); color: var(--violet); border: 1px solid rgba(167,139,250,0.32); }
+  .tag-amber { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(251,191,36,0.32); }
+  .tag-rose { background: var(--rose-soft); color: var(--rose); border: 1px solid rgba(251,113,133,0.32); }
+
+  /* Controls */
+  .btn-group {
+    display: inline-flex; background: var(--bg); padding: 4px;
+    border-radius: 10px; border: 1px solid var(--border); gap: 4px; flex-wrap: wrap;
+  }
+  .btn {
+    border: none; background: transparent; color: var(--text-muted);
+    font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+    padding: 7px 14px; border-radius: 7px; cursor: pointer; transition: all 0.2s;
+  }
+  .btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+  .btn.active {
+    background: linear-gradient(135deg, rgba(56,189,248,0.24), rgba(52,211,153,0.22));
+    color: #fff; border: 1px solid rgba(56,189,248,0.48);
+    box-shadow: 0 0 16px rgba(56,189,248,0.16);
+  }
+  .btn-action {
+    background: linear-gradient(135deg, #0284c7, #059669);
+    color: #fff; border: none; padding: 8px 16px; border-radius: 9px;
+    font-size: 13px; font-weight: 700; cursor: pointer; transition: transform 0.15s, filter 0.2s;
+  }
+  .btn-action:hover { filter: brightness(1.12); transform: translateY(-1px); }
+  .btn-action:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
+  .btn-ghost {
+    background: rgba(255,255,255,0.05); color: var(--text);
+    border: 1px solid var(--border); padding: 8px 14px; border-radius: 9px;
+    font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); border-color: var(--border-strong); }
+
+  select {
+    background: #070b14; color: var(--text); border: 1px solid var(--border-strong);
+    border-radius: 8px; padding: 7px 10px; font-family: var(--font-mono);
+    font-size: 13px; width: 100%; outline: none;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--cyan); cursor: pointer; }
+
+  .flex-between { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .grid-2-ring { display: grid; grid-template-columns: 0.95fr 1.05fr; gap: 20px; align-items: start; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+
+  .svg-stage {
+    width: 100%; background: #070b14;
+    border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px; overflow-x: auto; margin-top: 14px;
+  }
+  .formula-box {
+    background: #070b14; border: 1px solid rgba(56, 189, 248, 0.28);
+    border-radius: 10px; padding: 12px 16px; font-family: var(--font-mono);
+    font-size: 13px; color: #e0f2fe; margin: 12px 0; overflow-x: auto; text-align: center;
+  }
+  .callout-cyan {
+    background: rgba(56, 189, 248, 0.08); border-left: 3px solid var(--cyan);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #e0f2fe; margin-top: 14px;
+  }
+  .callout-emerald {
+    background: rgba(52, 211, 153, 0.08); border-left: 3px solid var(--emerald);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #d1fae5; margin-top: 14px;
+  }
+  .callout-amber {
+    background: rgba(251, 191, 36, 0.08); border-left: 3px solid var(--amber);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #fef3c7; margin-top: 14px;
+  }
+
+  /* Ring Timeline */
+  .ring-timeline {
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 14px;
+  }
+  .rt-step {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 9px; padding: 8px 6px; text-align: center; cursor: pointer;
+    transition: all 0.2s; font-size: 11.5px;
+  }
+  .rt-step:hover { border-color: var(--border-strong); }
+  .rt-step.active {
+    background: rgba(56,189,248,0.2); border-color: var(--cyan); color: #fff;
+    box-shadow: 0 0 14px rgba(56,189,248,0.2);
+  }
+  .rt-step .ph { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); display: block; }
+  .rt-step.active .ph { color: var(--cyan); }
+  .rt-step strong { display: block; margin-top: 2px; }
+
+  /* Ring GPU State Cards */
+  .gpu-cards { display: flex; flex-direction: column; gap: 10px; }
+  .gpu-card {
+    background: #070b14; border: 1px solid var(--border);
+    border-radius: 11px; padding: 11px 14px;
+  }
+  .gpu-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12.5px; font-weight: 700; margin-bottom: 8px;
+  }
+  .chunk-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+  .chunk-box {
+    border-radius: 8px; padding: 8px 4px; text-align: center;
+    font-family: var(--font-mono); font-size: 13px; font-weight: 800;
+    border: 1px solid var(--border); background: var(--bg-elev);
+    transition: all 0.28s;
+  }
+  .chunk-box .c-sub {
+    display: block; font-size: 9.5px; font-weight: 500; color: var(--text-dim); margin-top: 2px;
+  }
+  .chunk-box.just-updated {
+    background: rgba(251, 191, 36, 0.2); border-color: var(--amber); color: #fef3c7;
+    transform: translateY(-2px); box-shadow: 0 0 14px rgba(251, 191, 36, 0.24);
+  }
+  .chunk-box.complete {
+    background: rgba(52, 211, 153, 0.18); border-color: var(--emerald); color: #d1fae5;
+  }
+  .chunk-box.complete.just-updated {
+    background: rgba(52, 211, 153, 0.34); border-color: #6ee7b7; color: #fff;
+    box-shadow: 0 0 18px rgba(52, 211, 153, 0.36);
+  }
+
+  /* Latency Bars */
+  .lat-row {
+    background: #070b14; border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .lat-top {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px; font-weight: 700; margin-bottom: 6px;
+  }
+  .lat-track {
+    height: 14px; background: rgba(255,255,255,0.06);
+    border-radius: 999px; overflow: hidden;
+  }
+  .lat-fill { height: 100%; border-radius: 999px; transition: width 0.3s ease; }
+
+  .ctrl-group {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .ctrl-label {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px; font-weight: 600; margin-bottom: 6px;
+  }
+  .ctrl-val { font-family: var(--font-mono); color: var(--cyan); font-weight: 800; }
+
+  footer {
+    margin-top: 64px; text-align: center; font-size: 13px;
+    color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 24px;
+  }
+
+  @media (max-width: 940px) {
+    .grid-2, .grid-2-ring, .grid-3 { grid-template-columns: 1fr; }
+    .ring-timeline { grid-template-columns: repeat(4, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .container { padding: 0 16px 64px; }
+    .card { padding: 16px; }
+    .ring-timeline { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+  <meta name="ai-title" content="深入图解 GPU 间 AllReduce 通信：Ring 算法与大模型实战" />
+  <meta name="ai-category" content="AI 工程与评测" />
+  <meta name="ai-tags" content="大模型, FSDP, MoE, PyTorch" />
+  <meta name="description" content="多卡训练和推理大模型时，成百上千张 GPU 不能各自闷头算，必须高频“对账汇总”。AllReduce 就是多卡世界里最重要、最频繁的一条神经动脉——把所有卡上的局部结果规约求和，并让每一张卡都同步拿到完整总和。" />
+  <meta name="ai-created" content="2026-11-26T15:11:29Z" />
+  <meta name="ai-updated" content="2026-11-26T15:11:30Z" />
+</head>
+<body>
+
+<noscript>
+  <div class="noscript-bar">
+    ⚠️ 当前预览环境禁用了 JavaScript。请右键此文件并用 Chrome / Edge / Firefox 浏览器打开以运行全部交互动画！
+  </div>
+</noscript>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <a href="#" class="brand">
+      <span class="brand-dot"></span>
+      GPU 间 AllReduce 集合通信图解
+    </a>
+    <div class="nav-links">
+      <a href="#sec-what">01 什么是 AllReduce</a>
+      <a href="#sec-ring">02 Ring-AllReduce 动画</a>
+      <a href="#sec-llm">03 大模型 TP / DDP 实战</a>
+      <a href="#sec-hw">04 NVLink 与耗时计算器</a>
+      <span class="status-pill" id="bootStatus">正在初始化…</span>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="hero-badge">分布式训练与多卡推理核心原语 · 一次秒开加固版</div>
+    <h1>GPU 之间的 AllReduce 通信是什么？<br />从集合通信家族到 Ring-AllReduce 与大模型实战</h1>
+    <p>多卡训练和推理大模型时，成百上千张 GPU 不能各自闷头算，必须高频“对账汇总”。<strong>AllReduce</strong> 就是多卡世界里最重要、最频繁的一条神经动脉——把所有卡上的局部结果规约求和，并让<strong>每一张卡都同步拿到完整总和</strong>。</p>
+    <div class="pill-row">
+      <span class="pill">All + Reduce = 全卡汇总</span>
+      <span class="pill">Ring-AllReduce 2(N-1)/N</span>
+      <span class="pill">Reduce-Scatter + AllGather</span>
+      <span class="pill">张量并行 TP (2L 次/步)</span>
+      <span class="pill">NVLink vs InfiniBand</span>
+    </div>
+  </header>
+
+  <!-- ========================================================
+       SECTION 01: WHAT IS ALLREDUCE & COLLECTIVES FAMILY
+       ======================================================== -->
+  <section id="sec-what">
+    <div class="section-head">
+      <span class="section-num">01</span>
+      <h2>一句话看懂 AllReduce，以及它和“兄弟们”的区别</h2>
+    </div>
+    <p class="section-desc">
+      拆开名字就秒懂：<strong>Reduce（规约）</strong>指把多张卡上相同位置的数字合并（最常见是求和 <code>Sum</code> 或求平均 <code>Avg</code>）；<strong>All（全部）</strong>指最终结果不是只交 给 1 张主卡，而是<strong>每一张 GPU 都拿到一份完全相同的最终汇总结果</strong>。
+    </p>
+
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <div class="card-title">
+            交互实验 1：GPU 集合通信家族对比图（4 卡视角）
+            <span class="tag tag-cyan">点击切换 4 种最易混淆的原语</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            观察 4 张 GPU 在通信前（左）与通信后（右）手里张量块的变化，一次性彻底分清分布式训练中的四大核心通信！
+          </div>
+        </div>
+        <div class="btn-group" id="collTabs">
+          <button class="btn active" data-coll="allreduce">AllReduce（TP / DDP 核心）</button>
+          <button class="btn" data-coll="reducescatter">Reduce-Scatter（FSDP / ZeRO）</button>
+          <button class="btn" data-coll="allgather">AllGather（FSDP 拼权重）</button>
+          <button class="btn" data-coll="alltoall">All-to-All（MoE 专家并行）</button>
+        </div>
+      </div>
+
+      <div class="svg-stage" id="collSvgWrap"></div>
+      <div id="collExplain" class="callout-cyan"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 02: RING-ALLREDUCE STEP-BY-STEP ANIMATOR
+       ======================================================== -->
+  <section id="sec-ring">
+    <div class="section-head">
+      <span class="section-num">02</span>
+      <h2>工业界王牌算法：Ring-AllReduce（环形全规约）</h2>
+    </div>
+    <p class="section-desc">
+      如果让所有 GPU 都把数据发给 GPU 0 求和再广播回去，GPU 0 的网卡会瞬间堵爆（耗时随卡数 N 暴涨）。天才的 <strong>Ring-AllReduce</strong> 把 N 张卡连成一条单向环形接力赛道，将张量切成 N 块，拆成 <strong>Reduce-Scatter（N-1 步）+ AllGather（N-1 步）</strong>，让所有卡的带宽同时 100% 跑满！
+    </p>
+
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <div class="card-title">
+            交互实验 2：Ring-AllReduce 6 步逐帧推演（十进制密码版！）
+            <span class="tag tag-emerald">一眼看清哪几张卡已累加</span>
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            巧妙编码：GPU 0 = <code>[1,2,3,4]</code>，GPU 1 = <code>[10,20,30,40]</code>，GPU 2 = <code>[100,…]</code>，GPU 3 = <code>[1000,…]</code>。看数字变成 <strong><code>1111, 2222, 3333, 4444</code></strong> 就知道 4 张卡全部集齐！
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-ghost" id="btnRingPrev">← 上一步</button>
+          <button class="btn-action" id="btnRingNext">下一步 →</button>
+          <button class="btn-ghost" id="btnRingPlay">▶ 自动播放</button>
+          <button class="btn-ghost" id="btnRingReset">重置</button>
+        </div>
+      </div>
+
+      <!-- 7-Step Clickable Timeline -->
+      <div class="ring-timeline" id="ringTimeline">
+        <div class="rt-step active" data-rstep="0"><span class="ph">STEP 0</span><strong>初始状态</strong></div>
+        <div class="rt-step" data-rstep="1"><span class="ph">RS 1/3</span><strong>传递+累加</strong></div>
+        <div class="rt-step" data-rstep="2"><span class="ph">RS 2/3</span><strong>传递+累加</strong></div>
+        <div class="rt-step" data-rstep="3"><span class="ph">RS 3/3</span><strong>各得 1 块完整</strong></div>
+        <div class="rt-step" data-rstep="4"><span class="ph">AG 1/3</span><strong>纯覆盖扩散</strong></div>
+        <div class="rt-step" data-rstep="5"><span class="ph">AG 2/3</span><strong>纯覆盖扩散</strong></div>
+        <div class="rt-step" data-rstep="6"><span class="ph">AG 3/3</span><strong>全卡对齐 ✓</strong></div>
+      </div>
+
+      <div class="grid-2-ring" style="margin-top:16px;">
+        <!-- Left: Ring Topology SVG -->
+        <div>
+          <div class="svg-stage" style="margin-top:0;" id="ringSvgWrap"></div>
+          <div class="formula-box" style="margin-top:12px;">
+            每卡总发送量 = 2 · (N - 1) · (S / N) = 2 · ((N-1)/N) · S  ≈  2S（与卡数 N 无关！）
+          </div>
+        </div>
+
+        <!-- Right: 4 GPU Live Chunk Matrix -->
+        <div>
+          <div class="gpu-cards" id="ringGpuCards"></div>
+        </div>
+      </div>
+
+      <div id="ringStepExplain" class="callout-emerald"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 03: WHERE ALLREDUCE HAPPENS IN LLMs
+       ======================================================== -->
+  <section id="sec-llm">
+    <div class="section-head">
+      <span class="section-num">03</span>
+      <h2>AllReduce 在大模型训练与推理中的两大核心战场</h2>
+    </div>
+    <p class="section-desc">
+      为什么前面我们聊深模型推理慢时反复提到“每层 2 次 AllReduce”？点击下方切换查看 AllReduce 在 <strong>张量并行（TP）</strong> 与 <strong>数据并行（DDP / FSDP）</strong> 里的真实工作现场。
+    </p>
+
+    <div class="card">
+      <div class="flex-between">
+        <div class="card-title" style="margin:0;">
+          交互实验 3：大模型分布式并行中的 AllReduce 透视
+          <span class="tag tag-violet">Megatron-LM / PyTorch 实战</span>
+        </div>
+        <div class="btn-group" id="llmUseTabs">
+          <button class="btn active" data-use="tp">战场 A：张量并行 TP（推理与训练每层 2 次）</button>
+          <button class="btn" data-use="ddp">战场 B：数据并行 DDP（同步梯度 &amp; 进化为 FSDP）</button>
+        </div>
+      </div>
+
+      <div class="svg-stage" id="llmUseSvgWrap"></div>
+      <div id="llmUseExplain" class="callout-amber"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 04: HARDWARE BANDWIDTH & LATENCY CALCULATOR
+       ======================================================== -->
+  <section id="sec-hw">
+    <div class="section-head">
+      <span class="section-num">04</span>
+      <h2>硬件带宽、跳数延迟与算法耗时对比计算器</h2>
+    </div>
+    <p class="section-desc">
+      虽然 Ring-AllReduce 在带宽上近乎完美（<code>2S/B</code>），但当 GPU 扩到 64~256 张、且单次张量很小（如 TP 推理的激活值）时，Ring 绕圈的<strong>跳数延迟 <code>2(N-1)·α</code></strong> 就会暴露短板——这正是现代 NCCL 引入 <strong>Tree-AllReduce（双二叉树）</strong> 与 <strong>NVLink Switch 硬件网内规约（SHARP）</strong> 的原因！
+    </p>
+
+    <div class="card">
+      <div class="grid-2">
+        <!-- Left: Controls -->
+        <div>
+          <div class="ctrl-group">
+            <div class="ctrl-label"><span>参与通信的 GPU 数量 N</span><span class="ctrl-val" id="hwNVal">8 张卡</span></div>
+            <select id="hwN">
+              <option value="2">2 张 GPU</option>
+              <option value="4">4 张 GPU</option>
+              <option value="8" selected>8 张 GPU（标准单机 8 卡节点）</option>
+              <option value="16">16 张 GPU（2 机互联）</option>
+              <option value="64">64 张 GPU（8 机集群）</option>
+              <option value="256">256 张 GPU（32 机大规模训练）</option>
+            </select>
+          </div>
+
+          <div class="ctrl-group">
+            <div class="ctrl-label"><span>单次 AllReduce 张量大小 S</span><span class="ctrl-val" id="hwSVal">64 MB</span></div>
+            <input type="range" id="hwS" min="0" max="7" step="1" value="4" />
+            <div style="display:flex;justify-content:space-between;font-size:10.5px;font-family:var(--font-mono);color:var(--text-dim);margin-top:4px;">
+              <span>0.5MB(TP小)</span><span>4MB</span><span>16MB</span><span>64MB</span><span>256MB</span><span>2GB(DDP大)</span>
+            </div>
+          </div>
+
+          <div class="ctrl-group">
+            <div class="ctrl-label"><span>GPU 互联硬件总线</span><span class="ctrl-val" id="hwLinkVal">NVLink 4.0 (H100)</span></div>
+            <select id="hwLink">
+              <option value="pcie">PCIe 4.0 x16（单向 ~25 GB/s，延迟 ~12 μs）</option>
+              <option value="ib">InfiniBand NDR 400G（单向 ~50 GB/s，跨机延迟 ~8 μs）</option>
+              <option value="nv4" selected>NVLink 4.0 · H100 机内（单向 ~450 GB/s，延迟 ~2 μs）</option>
+              <option value="nv5">NVLink 5.0 · B200 机内（单向 ~900 GB/s，延迟 ~1.5 μs）</option>
+            </select>
+          </div>
+
+          <div class="callout-cyan" id="hwInsight"></div>
+        </div>
+
+        <!-- Right: Live Latency Comparison -->
+        <div class="card-sub">
+          <div class="card-title" style="margin-bottom:12px;">
+            理论单次 AllReduce 耗时对比（越短越快）
+            <span class="tag tag-emerald">α-β 通信模型</span>
+          </div>
+          <div id="hwBars"></div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:12px;line-height:1.6;">
+            <strong>公式说明（α = 单跳启动延迟，B = 单向有效带宽）：</strong><br/>
+            • <strong>朴素中心化 Master</strong>：<code>2(N-1)·(S/B + α)</code>（主卡带宽成死结）<br/>
+            • <strong>Ring-AllReduce</strong>：<code>2·((N-1)/N)·(S/B) + 2(N-1)·α</code>（大张量带宽最优）<br/>
+            • <strong>Tree-AllReduce (NCCL)</strong>：<code>2·(S/B) + 2·log₂(N)·α</code>（大集群小张量低延迟）<br/>
+            • <strong>NVLS 网内硬件规约</strong>：交换机芯片直接做加法，流量趋近 <code>1·S/B</code>！
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    单文件离线交互式图解 · GPU 集合通信专题（一次秒开加固架构：零 CDN / 无 svg.innerHTML / 独立异常隔离）
+  </footer>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  function renderSvgInto(wrapId, viewBox, minW, inner) {
+    var el = document.getElementById(wrapId);
+    if (!el) return;
+    el.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + viewBox + '" width="100%" ' +
+      'style="min-width:' + minW + 'px;display:block;">' + inner + '</svg>';
+  }
+
+  /* =========================================================
+     MODULE 1: COLLECTIVE COMMUNICATION FAMILY
+     ========================================================= */
+  var COLL_DATA = {
+    allreduce: {
+      title: 'AllReduce（Sum）',
+      before: [
+        ['A0', 'A1', 'A2', 'A3'],
+        ['B0', 'B1', 'B2', 'B3'],
+        ['C0', 'C1', 'C2', 'C3'],
+        ['D0', 'D1', 'D2', 'D3']
+      ],
+      after: [
+        ['Σ0', 'Σ1', 'Σ2', 'Σ3'],
+        ['Σ0', 'Σ1', 'Σ2', 'Σ3'],
+        ['Σ0', 'Σ1', 'Σ2', 'Σ3'],
+        ['Σ0', 'Σ1', 'Σ2', 'Σ3']
+      ],
+      color: '#34d399',
+      explain: '<strong>AllReduce（全规约，如求和）：</strong>每张卡输入同形状张量，通信后<strong>所有 4 张卡都拿到完整的逐元素总和</strong>（<code>Σ0 = A0+B0+C0+D0</code>）。数学上严格等价于 <strong>Reduce-Scatter + AllGather</strong>！广泛用于张量并行（TP）与数据并行（DDP）。'
+    },
+    reducescatter: {
+      title: 'Reduce-Scatter',
+      before: [
+        ['A0', 'A1', 'A2', 'A3'],
+        ['B0', 'B1', 'B2', 'B3'],
+        ['C0', 'C1', 'C2', 'C3'],
+        ['D0', 'D1', 'D2', 'D3']
+      ],
+      after: [
+        ['Σ0', '—', '—', '—'],
+        ['—', 'Σ1', '—', '—'],
+        ['—', '—', 'Σ2', '—'],
+        ['—', '—', '—', 'Σ3']
+      ],
+      color: '#38bdf8',
+      explain: '<strong>Reduce-Scatter（规约并分散）：</strong>AllReduce 的<strong>前半段</strong>！先逐元素求和，但每张卡只保留属于自己的 <code>1/N</code> 分片（GPU 0 只拿 Σ0，GPU 1 只拿 Σ1…），直接省下 <code>(N-1)/N</code> 的显存！这是 <strong>ZeRO / FSDP 梯度分片</strong>的核心原语。'
+    },
+    allgather: {
+      title: 'AllGather',
+      before: [
+        ['Σ0', '—', '—', '—'],
+        ['—', 'Σ1', '—', '—'],
+        ['—', '—', 'Σ2', '—'],
+        ['—', '—', '—', 'Σ3']
+      ],
+      after: [
+        ['Σ0', 'Σ1', 'Σ2', 'Σ3'],
+        ['Σ0', 'Σ1', 'Σ2', 'Σ3'],
+        ['Σ0', 'Σ1', 'Σ2', 'Σ3'],
+        ['Σ0', 'Σ1', 'Σ2', 'Σ3']
+      ],
+      color: '#a78bfa',
+      explain: '<strong>AllGather（全收集）：</strong>AllReduce 的<strong>后半段</strong>！不做任何加法，纯粹把每张卡手里的分片收集拼成完整张量，并让每张卡都持有一份完整拷贝。FSDP 在每层前向计算前用它临时拼回完整参数权重。'
+    },
+    alltoall: {
+      title: 'All-to-All',
+      before: [
+        ['0→0', '0→1', '0→2', '0→3'],
+        ['1→0', '1→1', '1→2', '1→3'],
+        ['2→0', '2→1', '2→2', '2→3'],
+        ['3→0', '3→1', '3→2', '3→3']
+      ],
+      after: [
+        ['0→0', '1→0', '2→0', '3→0'],
+        ['0→1', '1→1', '2→1', '3→1'],
+        ['0→2', '1→2', '2→2', '3→2'],
+        ['0→3', '1→3', '2→3', '3→3']
+      ],
+      color: '#fbbf24',
+      explain: '<strong>All-to-All（全互换 / 分布式转置）：</strong>和 AllReduce 完全不同——它不做求和，而是每张卡给其他每张卡发送<strong>各不相同的专属数据</strong>！这就是上一篇讲过的 <strong>MoE 专家并行（EP）</strong>把不同 Token 分发给对应专家所在 GPU 的核心通信！'
+    }
+  };
+
+  function initCollectives() {
+    var rowColors = ['#38bdf8', '#34d399', '#a78bfa', '#fbbf24'];
+
+    function drawSide(rows, startX, isAfter, accent) {
+      var s = '';
+      for (var r = 0; r < 4; r++) {
+        var y = 42 + r * 48;
+        s += '<text x="' + (startX - 10) + '" y="' + (y + 22) + '" fill="' + rowColors[r] + '" font-size="12" font-family="monospace" font-weight="700" text-anchor="end">GPU ' + r + '</text>';
+        for (var c = 0; c < 4; c++) {
+          var val = rows[r][c];
+          var empty = val === '—';
+          var x = startX + c * 68;
+          var fill = empty ? 'rgba(15,23,42,0.35)' : (isAfter ? 'rgba(52,211,153,0.16)' : 'rgba(148,163,184,0.1)');
+          var stroke = empty ? 'rgba(71,85,105,0.3)' : (isAfter ? accent : rowColors[r]);
+          var tc = empty ? '#475569' : '#fff';
+          if (isAfter && !empty && accent === '#fbbf24') {
+            // Color by source GPU for All-to-All clarity
+            var srcGpu = parseInt(val.charAt(0), 10);
+            stroke = rowColors[srcGpu] || accent;
+            fill = 'rgba(251,191,36,0.12)';
+          }
+          s += '<rect x="' + x + '" y="' + y + '" width="60" height="34" rx="7" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + (empty ? '1' : '1.6') + '"' + (empty ? ' stroke-dasharray="3 3"' : '') + '/>';
+          s += '<text x="' + (x + 30) + '" y="' + (y + 21) + '" fill="' + tc + '" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">' + val + '</text>';
+        }
+      }
+      return s;
+    }
+
+    function render(key) {
+      var d = COLL_DATA[key];
+      var inner =
+        '<text x="215" y="24" fill="#94a3b8" font-size="13" font-weight="700" text-anchor="middle">通信前（各卡初始张量）</text>' +
+        '<text x="685" y="24" fill="' + d.color + '" font-size="13" font-weight="700" text-anchor="middle">通信后（各卡最终状态）</text>' +
+        drawSide(d.before, 82, false, d.color) +
+        '<rect x="372" y="94" width="136" height="58" rx="11" fill="rgba(15,23,42,0.9)" stroke="' + d.color + '" stroke-width="2"/>' +
+        '<text x="440" y="119" fill="#fff" font-size="13" font-weight="800" text-anchor="middle">' + d.title + '</text>' +
+        '<text x="440" y="138" fill="' + d.color + '" font-size="11" font-family="monospace" text-anchor="middle">NVLink / RDMA →</text>' +
+        '<line x1="354" y1="123" x2="372" y2="123" stroke="' + d.color + '" stroke-width="2"/>' +
+        '<line x1="508" y1="123" x2="532" y2="123" stroke="' + d.color + '" stroke-width="2"/>' +
+        '<polygon points="532,117 544,123 532,129" fill="' + d.color + '"/>' +
+        drawSide(d.after, 554, true, d.color);
+
+      renderSvgInto('collSvgWrap', '0 0 860 245', 680, inner);
+      document.getElementById('collExplain').innerHTML = d.explain;
+    }
+
+    var tabs = document.getElementById('collTabs');
+    tabs.addEventListener('click', function(e) {
+      var btn = e.target.closest('button[data-coll]');
+      if (!btn) return;
+      var all = tabs.querySelectorAll('button');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      btn.classList.add('active');
+      render(btn.getAttribute('data-coll'));
+    });
+    render('allreduce');
+  }
+
+  /* =========================================================
+     MODULE 2: RING-ALLREDUCE 6-STEP POWERS-OF-10 SIMULATOR
+     ========================================================= */
+  function buildRingStates() {
+    var N = 4;
+    var states = [];
+    // Step 0: initial powers-of-10 values so digits instantly reveal participating GPUs!
+    var vals = [
+      [1, 2, 3, 4],
+      [10, 20, 30, 40],
+      [100, 200, 300, 400],
+      [1000, 2000, 3000, 4000]
+    ];
+    var complete = [
+      [false, false, false, false],
+      [false, false, false, false],
+      [false, false, false, false],
+      [false, false, false, false]
+    ];
+    states.push({
+      step: 0, phase: 'init',
+      vals: vals.map(function(r) { return r.slice(); }),
+      complete: complete.map(function(r) { return r.slice(); }),
+      updated: [
+        [false, false, false, false], [false, false, false, false],
+        [false, false, false, false], [false, false, false, false]
+      ],
+      arrows: []
+    });
+
+    // Reduce-Scatter: steps 1..3 (k = 0..2)
+    for (var k = 0; k < N - 1; k++) {
+      var prev = states[states.length - 1];
+      var nextV = prev.vals.map(function(r) { return r.slice(); });
+      var nextC = prev.complete.map(function(r) { return r.slice(); });
+      var upd = [
+        [false, false, false, false], [false, false, false, false],
+        [false, false, false, false], [false, false, false, false]
+      ];
+      var arrows = [];
+      for (var g = 0; g < N; g++) {
+        var cIdx = (g - k + N) % N;
+        var dst = (g + 1) % N;
+        var sentVal = prev.vals[g][cIdx];
+        nextV[dst][cIdx] = prev.vals[dst][cIdx] + sentVal;
+        upd[dst][cIdx] = true;
+        if (k === N - 2) nextC[dst][cIdx] = true;
+        arrows.push({ from: g, to: dst, cIdx: cIdx, val: sentVal, op: 'ADD' });
+      }
+      states.push({ step: k + 1, phase: 'rs', vals: nextV, complete: nextC, updated: upd, arrows: arrows });
+    }
+
+    // AllGather: steps 4..6 (k = 0..2)
+    for (var m = 0; m < N - 1; m++) {
+      var prev2 = states[states.length - 1];
+      var nextV2 = prev2.vals.map(function(r) { return r.slice(); });
+      var nextC2 = prev2.complete.map(function(r) { return r.slice(); });
+      var upd2 = [
+        [false, false, false, false], [false, false, false, false],
+        [false, false, false, false], [false, false, false, false]
+      ];
+      var arrows2 = [];
+      for (var g2 = 0; g2 < N; g2++) {
+        var cIdx2 = (g2 + 1 - m + N) % N;
+        var dst2 = (g2 + 1) % N;
+        var sentVal2 = prev2.vals[g2][cIdx2];
+        nextV2[dst2][cIdx2] = sentVal2; // pure overwrite
+        upd2[dst2][cIdx2] = true;
+        nextC2[dst2][cIdx2] = true;
+        arrows2.push({ from: g2, to: dst2, cIdx: cIdx2, val: sentVal2, op: 'COPY' });
+      }
+      states.push({ step: N + m, phase: 'ag', vals: nextV2, complete: nextC2, updated: upd2, arrows: arrows2 });
+    }
+    return states;
+  }
+
+  function initRingAnimator() {
+    var states = buildRingStates();
+    var curStep = 0;
+    var playTimer = null;
+    var gpuColors = ['#38bdf8', '#34d399', '#a78bfa', '#fbbf24'];
+
+    function stopPlay() {
+      if (playTimer) { clearInterval(playTimer); playTimer = null; }
+      document.getElementById('btnRingPlay').textContent = '▶ 自动播放';
+    }
+
+    function render() {
+      var st = states[curStep];
+
+      // 1. Update timeline pills
+      var pills = document.getElementById('ringTimeline').querySelectorAll('.rt-step');
+      for (var i = 0; i < pills.length; i++) {
+        pills[i].classList.toggle('active', i === curStep);
+      }
+      document.getElementById('btnRingPrev').disabled = curStep === 0;
+      document.getElementById('btnRingNext').disabled = curStep === states.length - 1;
+
+      // 2. Render Ring Topology SVG
+      // 4 GPUs placed cleanly clockwise: GPU0 top-left, GPU1 top-right, GPU2 bottom-right, GPU3 bottom-left
+      var coords = [
+        { x: 105, y: 74 },
+        { x: 325, y: 74 },
+        { x: 325, y: 234 },
+        { x: 105, y: 234 }
+      ];
+      var edgeMids = [
+        { x: 215, y: 50, x1: 158, y1: 74, x2: 272, y2: 74 },   // 0 -> 1 (top)
+        { x: 374, y: 154, x1: 325, y1: 112, x2: 325, y2: 196 }, // 1 -> 2 (right)
+        { x: 215, y: 266, x1: 272, y1: 234, x2: 158, y2: 234 }, // 2 -> 3 (bottom)
+        { x: 54,  y: 154, x1: 105, y1: 196, x2: 105, y2: 112 }  // 3 -> 0 (left)
+      ];
+
+      var svgInner =
+        '<defs>' +
+          '<marker id="arrCyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">' +
+            '<path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8"/>' +
+          '</marker>' +
+          '<marker id="arrGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">' +
+            '<path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399"/>' +
+          '</marker>' +
+          '<marker id="arrDim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">' +
+            '<path d="M 0 1 L 10 5 L 0 9 z" fill="#475569"/>' +
+          '</marker>' +
+        '</defs>';
+
+      // Center Phase Indicator
+      var centerTitle = st.phase === 'init' ? '准备发令' : (st.phase === 'rs' ? '阶段 1: Reduce-Scatter' : '阶段 2: AllGather');
+      var centerSub = st.phase === 'init' ? '4 卡连成单向环' : (st.phase === 'rs' ? '每步发 1/4 块 + 累加' : '每步发 1/4 完整块覆盖');
+      var centerCol = st.phase === 'init' ? '#94a3b8' : (st.phase === 'rs' ? '#38bdf8' : '#34d399');
+      svgInner +=
+        '<rect x="142" y="128" width="146" height="52" rx="10" fill="rgba(15,23,42,0.9)" stroke="' + centerCol + '" stroke-width="1.5"/>' +
+        '<text x="215" y="150" fill="#fff" font-size="11.5" font-weight="800" text-anchor="middle">' + centerTitle + '</text>' +
+        '<text x="215" y="168" fill="' + centerCol + '" font-size="10" text-anchor="middle">' + centerSub + '</text>';
+
+      // Draw 4 Ring Links
+      for (var eIdx = 0; eIdx < 4; eIdx++) {
+        var em = edgeMids[eIdx];
+        var activeArr = st.arrows.length > 0 ? st.arrows[eIdx] : null;
+        var strokeCol = !activeArr ? '#334155' : (st.phase === 'rs' ? '#38bdf8' : '#34d399');
+        var marker = !activeArr ? 'url(#arrDim)' : (st.phase === 'rs' ? 'url(#arrCyan)' : 'url(#arrGreen)');
+        svgInner += '<line x1="' + em.x1 + '" y1="' + em.y1 + '" x2="' + em.x2 + '" y2="' + em.y2 + '" stroke="' + strokeCol + '" stroke-width="' + (activeArr ? '3' : '1.8') + '" marker-end="' + marker + '"/>';
+        if (activeArr) {
+          var badgeTxt = 'C' + activeArr.cIdx + ':' + activeArr.val;
+          svgInner +=
+            '<rect x="' + (em.x - 42) + '" y="' + (em.y - 12) + '" width="84" height="22" rx="11" fill="#080c16" stroke="' + strokeCol + '" stroke-width="1.3"/>' +
+            '<text x="' + em.x + '" y="' + (em.y + 3) + '" fill="#fff" font-size="10.5" font-family="monospace" font-weight="700" text-anchor="middle">' + badgeTxt + '</text>';
+        }
+      }
+
+      // Draw 4 GPU Nodes
+      for (var g = 0; g < 4; g++) {
+        var pt = coords[g];
+        svgInner +=
+          '<rect x="' + (pt.x - 50) + '" y="' + (pt.y - 34) + '" width="100" height="68" rx="12" fill="rgba(19,28,49,0.96)" stroke="' + gpuColors[g] + '" stroke-width="2.2"/>' +
+          '<text x="' + pt.x + '" y="' + (pt.y - 6) + '" fill="' + gpuColors[g] + '" font-size="13.5" font-family="monospace" font-weight="800" text-anchor="middle">GPU ' + g + '</text>' +
+          '<text x="' + pt.x + '" y="' + (pt.y + 15) + '" fill="#cbd5e1" font-size="10" text-anchor="middle">' + (curStep === 6 ? '4/4 完整 ✓' : (curStep >= 3 ? '已含完整块' : '全速收发中')) + '</text>';
+      }
+
+      renderSvgInto('ringSvgWrap', '0 0 430 305', 340, svgInner);
+
+      // 3. Render 4 GPU Chunk State Cards
+      var cardsHtml = '';
+      for (var gg = 0; gg < 4; gg++) {
+        var chunksHtml = '';
+        for (var cc = 0; cc < 4; cc++) {
+          var v = st.vals[gg][cc];
+          var isComp = st.complete[gg][cc];
+          var isUpd = st.updated[gg][cc];
+          var cls = 'chunk-box' + (isComp ? ' complete' : '') + (isUpd ? ' just-updated' : '');
+          var sub = isComp ? (isUpd ? (st.phase === 'rs' ? '集齐总和!' : '覆盖到手✓') : '完整总和✓') : (isUpd ? '刚累加 +' : 'Chunk ' + cc);
+          chunksHtml += '<div class="' + cls + '">' + v + '<span class="c-sub">' + sub + '</span></div>';
+        }
+        cardsHtml +=
+          '<div class="gpu-card">' +
+            '<div class="gpu-head">' +
+              '<span style="color:' + gpuColors[gg] + ';">GPU ' + gg + ' 显存张量（切为 4 块）</span>' +
+              '<span class="tag ' + (curStep === 6 ? 'tag-emerald' : 'tag-cyan') + '">' + (curStep === 0 ? '初始局部值' : (curStep === 6 ? '完全一致 ✓' : 'Step ' + curStep + ' / 6')) + '</span>' +
+            '</div>' +
+            '<div class="chunk-row">' + chunksHtml + '</div>' +
+          '</div>';
+      }
+      document.getElementById('ringGpuCards').innerHTML = cardsHtml;
+
+      // 4. Narrative Explanation
+      var expEl = document.getElementById('ringStepExplain');
+      if (curStep === 0) {
+        expEl.innerHTML = '<strong>初始状态：</strong>4 张 GPU 各自算出了自己的局部张量（如局部梯度），切成 4 个等大分片。目标：让每张卡最终都变成 <code>[1111, 2222, 3333, 4444]</code>。点击“下一步”发车！';
+      } else if (curStep === 1) {
+        expEl.innerHTML = '<strong>Reduce-Scatter 第 1/3 步：</strong>每张卡同时向顺时针下一张卡发送 1/4 块数据，接收方立刻<strong>累加</strong>到自己对应分片（如 GPU 1 收到 GPU 0 的 <code>1</code>，变成 <code>11</code>）。4 条链路同时 100% 满载！';
+      } else if (curStep === 2) {
+        expEl.innerHTML = '<strong>Reduce-Scatter 第 2/3 步：</strong>把刚刚累加过的半成品继续往下传 1 格再累加！看 GPU 2 的 Chunk 0 已变成 <code>111</code>（集齐了 GPU 0+1+2 三张卡之和）。';
+      } else if (curStep === 3) {
+        expEl.innerHTML = '<strong>🎉 Reduce-Scatter 结束（第 3/3 步）：</strong>奇迹出现！每张卡上都恰好诞生了 <strong>1 块集齐全部 4 卡总和的完全体分片</strong>（GPU 0 拥有 <code>2222</code>、GPU 1 拥有 <code>3333</code>、GPU 2 拥有 <code>4444</code>、GPU 3 拥有 <code>1111</code>）！注意：如果此时是 FSDP，通信到这里就结束了！';
+      } else if (curStep === 4) {
+        expEl.innerHTML = '<strong>AllGather 第 1/3 步：</strong>进入第二阶段！不再做任何加法，每张卡把手里的“完全体分片”顺时针传给下一张卡<strong>直接覆盖</strong>。每张卡现在拥有 2 块完整总和！';
+      } else if (curStep === 5) {
+        expEl.innerHTML = '<strong>AllGather 第 2/3 步：</strong>继续顺时针扩散刚刚收到的完整分片，每张卡现在已集齐 3 块完整总和！';
+      } else {
+        expEl.innerHTML = '<strong>✅ AllReduce 圆满完成（第 6/6 步）：</strong>4 张卡全部精确同步为 <code>[1111, 2222, 3333, 4444]</code>！整个过程每张卡总共只发送了 <code>6 × (S/4) = 1.5S</code> 数据量，没有任何一张中心瓶颈卡！';
+      }
+    }
+
+    document.getElementById('ringTimeline').addEventListener('click', function(e) {
+      var pill = e.target.closest('.rt-step[data-rstep]');
+      if (!pill) return;
+      stopPlay();
+      curStep = parseInt(pill.getAttribute('data-rstep'), 10);
+      render();
+    });
+    document.getElementById('btnRingPrev').addEventListener('click', function() {
+      stopPlay(); if (curStep > 0) { curStep--; render(); }
+    });
+    document.getElementById('btnRingNext').addEventListener('click', function() {
+      stopPlay(); if (curStep < states.length - 1) { curStep++; render(); }
+    });
+    document.getElementById('btnRingReset').addEventListener('click', function() {
+      stopPlay(); curStep = 0; render();
+    });
+    document.getElementById('btnRingPlay').addEventListener('click', function() {
+      if (playTimer) { stopPlay(); return; }
+      if (curStep >= states.length - 1) curStep = 0;
+      this.textContent = '⏸ 暂停';
+      render();
+      playTimer = setInterval(function() {
+        if (curStep >= states.length - 1) { stopPlay(); return; }
+        curStep++;
+        render();
+      }, 1150);
+    });
+    render();
+  }
+
+  /* =========================================================
+     MODULE 3: LLM TP VS DDP / FSDP BATTLEFIELDS
+     ========================================================= */
+  var LLM_USE = {
+    tp: {
+      svg:
+        '<text x="435" y="24" fill="#38bdf8" font-size="13.5" font-weight="800" text-anchor="middle">单个 Transformer 层的 Megatron 张量并行（TP=2 示例：精准仅需 2 次 AllReduce！）</text>' +
+        '<!-- Input x -->' +
+        '<rect x="18" y="88" width="76" height="58" rx="9" fill="rgba(148,163,184,0.14)" stroke="#94a3b8"/>' +
+        '<text x="56" y="114" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">输入 X</text>' +
+        '<text x="56" y="132" fill="#94a3b8" font-size="10" text-anchor="middle">2卡同拷贝</text>' +
+
+        '<!-- Attention Block Split -->' +
+        '<path d="M 94 117 L 116 117 L 116 66 L 136 66" fill="none" stroke="#38bdf8" stroke-width="1.8"/>' +
+        '<path d="M 116 117 L 116 168 L 136 168" fill="none" stroke="#34d399" stroke-width="1.8"/>' +
+
+        '<rect x="136" y="42" width="166" height="48" rx="8" fill="rgba(56,189,248,0.16)" stroke="#38bdf8"/>' +
+        '<text x="219" y="62" fill="#e0f2fe" font-size="11.5" font-weight="700" text-anchor="middle">GPU 0：前一半 Head + W_O(上)</text>' +
+        '<text x="219" y="79" fill="#7dd3fc" font-size="10" font-family="monospace" text-anchor="middle">算出局部和 Y_attn_0</text>' +
+
+        '<rect x="136" y="144" width="166" height="48" rx="8" fill="rgba(52,211,153,0.16)" stroke="#34d399"/>' +
+        '<text x="219" y="164" fill="#d1fae5" font-size="11.5" font-weight="700" text-anchor="middle">GPU 1：后一半 Head + W_O(下)</text>' +
+        '<text x="219" y="181" fill="#6ee7b7" font-size="10" font-family="monospace" text-anchor="middle">算出局部和 Y_attn_1</text>' +
+
+        '<!-- AllReduce #1 -->' +
+        '<path d="M 302 66 L 324 66 L 324 102" fill="none" stroke="#38bdf8" stroke-width="1.8"/>' +
+        '<path d="M 302 168 L 324 168 L 324 132" fill="none" stroke="#34d399" stroke-width="1.8"/>' +
+        '<rect x="324" y="84" width="102" height="66" rx="10" fill="rgba(251,191,36,0.22)" stroke="#fbbf24" stroke-width="2.2"/>' +
+        '<text x="375" y="110" fill="#fef3c7" font-size="12" font-weight="800" text-anchor="middle">AllReduce #1</text>' +
+        '<text x="375" y="128" fill="#fbbf24" font-size="10" font-family="monospace" text-anchor="middle">Y0 + Y1</text>' +
+        '<text x="375" y="142" fill="#fde68a" font-size="9.5" text-anchor="middle">合成完整 AttnOut</text>' +
+
+        '<!-- FFN Split -->' +
+        '<path d="M 426 117 L 452 117 L 452 66 L 472 66" fill="none" stroke="#38bdf8" stroke-width="1.8"/>' +
+        '<path d="M 452 117 L 452 168 L 472 168" fill="none" stroke="#34d399" stroke-width="1.8"/>' +
+
+        '<rect x="472" y="42" width="174" height="48" rx="8" fill="rgba(167,139,250,0.18)" stroke="#a78bfa"/>' +
+        '<text x="559" y="62" fill="#ede9fe" font-size="11.5" font-weight="700" text-anchor="middle">GPU 0：列切 W_up → SiLU → 行切 W_down</text>' +
+        '<text x="559" y="79" fill="#c4b5fd" font-size="10" font-family="monospace" text-anchor="middle">算出局部和 Y_ffn_0</text>' +
+
+        '<rect x="472" y="144" width="174" height="48" rx="8" fill="rgba(167,139,250,0.18)" stroke="#a78bfa"/>' +
+        '<text x="559" y="164" fill="#ede9fe" font-size="11.5" font-weight="700" text-anchor="middle">GPU 1：列切 W_up → SiLU → 行切 W_down</text>' +
+        '<text x="559" y="181" fill="#c4b5fd" font-size="10" font-family="monospace" text-anchor="middle">算出局部和 Y_ffn_1</text>' +
+
+        '<!-- AllReduce #2 -->' +
+        '<path d="M 646 66 L 668 66 L 668 102" fill="none" stroke="#a78bfa" stroke-width="1.8"/>' +
+        '<path d="M 646 168 L 668 168 L 668 132" fill="none" stroke="#a78bfa" stroke-width="1.8"/>' +
+        '<rect x="668" y="84" width="102" height="66" rx="10" fill="rgba(251,191,36,0.22)" stroke="#fbbf24" stroke-width="2.2"/>' +
+        '<text x="719" y="110" fill="#fef3c7" font-size="12" font-weight="800" text-anchor="middle">AllReduce #2</text>' +
+        '<text x="719" y="128" fill="#fbbf24" font-size="10" font-family="monospace" text-anchor="middle">Y0 + Y1</text>' +
+        '<text x="719" y="142" fill="#fde68a" font-size="9.5" text-anchor="middle">合成完整 FFNOut</text>' +
+
+        '<line x1="770" y1="117" x2="796" y2="117" stroke="#34d399" stroke-width="2"/>' +
+        '<rect x="796" y="88" width="66" height="58" rx="9" fill="rgba(52,211,153,0.18)" stroke="#34d399"/>' +
+        '<text x="829" y="114" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">下层</text>' +
+        '<text x="829" y="132" fill="#a7f3d0" font-size="10" text-anchor="middle">Layer l+1</text>',
+      explain: '<strong>张量并行（TP）为什么对 NVLink 依赖极强？</strong>因为每层 Transformer 的 <code>W_O</code> 后和 <code>W_down</code> 后都必须同步等 1 次 AllReduce！以 80 层的 Llama 3 70B 为例，<strong>每吐出 1 个字就要连续阻塞执行 80 × 2 = 160 次 AllReduce</strong>。因此 TP 几乎只在单机 8 卡高速 NVLink 内开启，绝不轻易跨机！'
+    },
+    ddp: {
+      svg:
+        '<text x="435" y="24" fill="#34d399" font-size="13.5" font-weight="800" text-anchor="middle">数据并行 DDP（全量梯度 AllReduce）及其现代进化版 FSDP / ZeRO</text>' +
+        '<!-- 3 GPUs with different data batches -->' +
+        '<rect x="26" y="44" width="192" height="44" rx="8" fill="rgba(56,189,248,0.15)" stroke="#38bdf8"/>' +
+        '<text x="122" y="64" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">GPU 0 (数据批次 A)</text>' +
+        '<text x="122" y="80" fill="#7dd3fc" font-size="10" font-family="monospace" text-anchor="middle">反向算出局部梯度 grad_A</text>' +
+
+        '<rect x="26" y="98" width="192" height="44" rx="8" fill="rgba(52,211,153,0.15)" stroke="#34d399"/>' +
+        '<text x="122" y="118" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">GPU 1 (数据批次 B)</text>' +
+        '<text x="122" y="134" fill="#6ee7b7" font-size="10" font-family="monospace" text-anchor="middle">反向算出局部梯度 grad_B</text>' +
+
+        '<rect x="26" y="152" width="192" height="44" rx="8" fill="rgba(167,139,250,0.15)" stroke="#a78bfa"/>' +
+        '<text x="122" y="172" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">GPU 2 (数据批次 C)</text>' +
+        '<text x="122" y="188" fill="#ddd6fe" font-size="10" font-family="monospace" text-anchor="middle">反向算出局部梯度 grad_C</text>' +
+
+        '<!-- Bucketed Async AllReduce -->' +
+        '<line x1="218" y1="66" x2="274" y2="112" stroke="#38bdf8" stroke-width="1.8"/>' +
+        '<line x1="218" y1="120" x2="274" y2="120" stroke="#34d399" stroke-width="1.8"/>' +
+        '<line x1="218" y1="174" x2="274" y2="128" stroke="#a78bfa" stroke-width="1.8"/>' +
+
+        '<rect x="274" y="66" width="218" height="108" rx="11" fill="rgba(251,191,36,0.16)" stroke="#fbbf24" stroke-width="2"/>' +
+        '<text x="383" y="94" fill="#fef3c7" font-size="13" font-weight="800" text-anchor="middle">AllReduce (Avg 梯度)</text>' +
+        '<text x="383" y="116" fill="#fbbf24" font-size="11" font-family="monospace" text-anchor="middle">g = (g_A + g_B + g_C) / 3</text>' +
+        '<text x="383" y="138" fill="#cbd5e1" font-size="10.5" text-anchor="middle">✓ 边反向算浅层，边异步传深层</text>' +
+        '<text x="383" y="156" fill="#34d399" font-size="10.5" font-weight="700" text-anchor="middle">（计算与通信高度重叠 Overlap）</text>' +
+
+        '<!-- Modern Evolution to FSDP -->' +
+        '<line x1="492" y1="120" x2="536" y2="120" stroke="#34d399" stroke-width="2.2"/>' +
+        '<rect x="536" y="48" width="314" height="144" rx="11" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="1.8"/>' +
+        '<text x="693" y="76" fill="#34d399" font-size="13" font-weight="800" text-anchor="middle">进阶：FSDP / ZeRO-3 的神操作</text>' +
+        '<text x="693" y="102" fill="#e2e8f0" font-size="11.5" text-anchor="middle">把 1 次 AllReduce 拆成它的物理两半：</text>' +
+        '<text x="693" y="126" fill="#7dd3fc" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">1. 反向只做 Reduce-Scatter (各存 1/N 梯度)</text>' +
+        '<text x="693" y="148" fill="#ddd6fe" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">2. 前向再按需 AllGather (临时拼回权重)</text>' +
+        '<text x="693" y="174" fill="#fde68a" font-size="11" font-weight="700" text-anchor="middle">通信量完全不变，却狂省 N 倍显存！</text>',
+      explain: '<strong>数据并行（DDP）与 FSDP 的优雅统一：</strong>经典 DDP 用 AllReduce 把各卡梯度求平均，且因为反向传播是从深层到浅层逐层算出的，框架把算好的深层梯度打包进 Bucket <strong>异步发 AllReduce</strong>，与浅层反向计算完美重叠；而现代 <strong>FSDP / ZeRO</strong> 更是巧妙地把 <code>AllReduce = Reduce-Scatter + AllGather</code> 拆开在反向和前向分别执行，做到通信量不增、显存直降 N 倍！'
+    }
+  };
+
+  function initLlmUse() {
+    function render(key) {
+      var d = LLM_USE[key];
+      renderSvgInto('llmUseSvgWrap', '0 0 876 218', 680, d.svg);
+      document.getElementById('llmUseExplain').innerHTML = d.explain;
+    }
+    var tabs = document.getElementById('llmUseTabs');
+    tabs.addEventListener('click', function(e) {
+      var btn = e.target.closest('button[data-use]');
+      if (!btn) return;
+      var all = tabs.querySelectorAll('button');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      btn.classList.add('active');
+      render(btn.getAttribute('data-use'));
+    });
+    render('tp');
+  }
+
+  /* =========================================================
+     MODULE 4: HARDWARE BANDWIDTH & LATENCY CALCULATOR
+     ========================================================= */
+  var SIZES_MB = [0.5, 2, 4, 16, 64, 256, 1024, 2048];
+  var LINKS = {
+    pcie: { name: 'PCIe 4.0 x16', bwGBs: 25,  alphaUs: 12 },
+    ib:   { name: 'InfiniBand 400G', bwGBs: 50, alphaUs: 8 },
+    nv4:  { name: 'NVLink 4.0 (H100)', bwGBs: 450, alphaUs: 2 },
+    nv5:  { name: 'NVLink 5.0 (B200)', bwGBs: 900, alphaUs: 1.5 }
+  };
+
+  function fmtTimeMs(ms) {
+    if (ms < 1) return (ms * 1000).toFixed(1) + ' μs';
+    if (ms < 1000) return ms.toFixed(2) + ' ms';
+    return (ms / 1000).toFixed(2) + ' s';
+  }
+
+  function initHwCalc() {
+    var elN = document.getElementById('hwN');
+    var elS = document.getElementById('hwS');
+    var elLink = document.getElementById('hwLink');
+
+    function render() {
+      var N = parseInt(elN.value, 10);
+      var sizeMB = SIZES_MB[parseInt(elS.value, 10)];
+      var link = LINKS[elLink.value];
+      var sizeGB = sizeMB / 1024;
+      var alphaMs = link.alphaUs / 1000;
+      var log2N = Math.log(N) / Math.LN2;
+
+      document.getElementById('hwNVal').textContent = N + ' 张卡';
+      document.getElementById('hwSVal').textContent = sizeMB >= 1024 ? ((sizeMB / 1024) + ' GB') : (sizeMB + ' MB');
+      document.getElementById('hwLinkVal').textContent = link.name;
+
+      // Latency formulas in ms
+      var tNaive = 2 * (N - 1) * ((sizeGB / link.bwGBs) * 1000 + alphaMs);
+      var tRing  = 2 * ((N - 1) / N) * ((sizeGB / link.bwGBs) * 1000) + 2 * (N - 1) * alphaMs;
+      var tTree  = 2 * ((sizeGB / link.bwGBs) * 1000) + 2 * log2N * alphaMs;
+      var tNvls  = 1.05 * ((sizeGB / link.bwGBs) * 1000) + 2 * alphaMs; // Hardware switch in-network reduction
+
+      var items = [
+        { name: '朴素中心化 Master（GPU 0 瓶颈）', ms: tNaive, col: '#fb7185', note: '卡越多越堵死' },
+        { name: 'Ring-AllReduce（环形带宽最优）', ms: tRing,  col: '#38bdf8', note: '跳数 = ' + (2 * (N - 1)) + ' 跳' },
+        { name: 'Tree-AllReduce（NCCL 双二叉树）', ms: tTree,  col: '#a78bfa', note: '跳数仅 ' + Math.round(2 * log2N) + ' 跳' },
+        { name: 'NVLS / SHARP（交换机硬件规约）', ms: tNvls,  col: '#34d399', note: '芯片内直接求和' }
+      ];
+
+      var maxMs = Math.max(tNaive, tRing, tTree, tNvls);
+      var html = '';
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        var pct = Math.max(2, (it.ms / maxMs) * 100);
+        html +=
+          '<div class="lat-row">' +
+            '<div class="lat-top">' +
+              '<span style="color:' + it.col + ';">' + it.name + ' <span style="font-size:11px;font-weight:400;color:var(--text-dim);">(' + it.note + ')</span></span>' +
+              '<span style="font-family:var(--font-mono);color:#fff;">' + fmtTimeMs(it.ms) + '</span>' +
+            '</div>' +
+            '<div class="lat-track"><div class="lat-fill" style="width:' + pct + '%;background:' + it.col + ';"></div></div>' +
+          '</div>';
+      }
+      document.getElementById('hwBars').innerHTML = html;
+
+      var speedup = (tNaive / tRing).toFixed(1);
+      var ringVsTree = tTree < tRing
+        ? '当前场景（大卡数或小张量）下 <strong>Tree 比 Ring 快 ' + (tRing / tTree).toFixed(1) + '×</strong>，因为 Ring 绕 ' + (2 * (N - 1)) + ' 跳的启动延迟占了大头！'
+        : '当前场景（大张量为主）下 <strong>Ring 与 Tree 带宽接近打平</strong>，Ring 相比朴素中心化方案提速高达 <strong>' + speedup + '×</strong>！';
+
+      document.getElementById('hwInsight').innerHTML =
+        '<strong>实战解读：</strong>' + ringVsTree +
+        (sizeMB <= 4 && N === 8 ? '<br/>💡 若这是 80 层大模型推理 TP=8（每步 160 次 AllReduce），单步纯通信耗时约 <strong>' + fmtTimeMs(tRing * 160) + '</strong>！' : '');
+    }
+
+    elN.addEventListener('change', render);
+    elS.addEventListener('input', render);
+    elLink.addEventListener('change', render);
+    render();
+  }
+
+  /* =========================================================
+     HARDENED SAFE BOOT
+     ========================================================= */
+  function safeBoot() {
+    var mods = [
+      { name: '集合通信家族', fn: initCollectives },
+      { name: 'Ring动画', fn: initRingAnimator },
+      { name: 'LLM战场', fn: initLlmUse },
+      { name: '硬件耗时计算器', fn: initHwCalc }
+    ];
+    var ok = 0;
+    for (var i = 0; i < mods.length; i++) {
+      try { mods[i].fn(); ok++; }
+      catch (e) { if (window.console && console.error) console.error('[模块异常]', mods[i].name, e); }
+    }
+    var st = document.getElementById('bootStatus');
+    if (st) {
+      if (ok === mods.length) {
+        st.textContent = '● ' + ok + '/' + mods.length + ' 交互模块就绪';
+        st.className = 'status-pill ok';
+      } else {
+        st.textContent = '⚠ 部分异常 (' + ok + '/' + mods.length + ')';
+      }
+    }
+  }
+
+  function scheduleBoot() {
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(safeBoot);
+    else setTimeout(safeBoot, 0);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scheduleBoot);
+  else scheduleBoot();
+})();
+</script>
+</body>
+</html>

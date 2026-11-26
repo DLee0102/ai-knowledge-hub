@@ -1,20 +1,28 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-26T09:21:24Z",
-  "totalCount": 4,
+  "generatedAt": "2026-11-26T15:11:32Z",
+  "totalCount": 5,
   "categories": [
     {
       "name": "核心架构",
       "count": 4
+    },
+    {
+      "name": "AI 工程与评测",
+      "count": 1
     }
   ],
   "tags": [
+    {
+      "name": "大模型",
+      "count": 4
+    },
     {
       "name": "KV Cache",
       "count": 3
     },
     {
-      "name": "大模型",
+      "name": "MoE",
       "count": 3
     },
     {
@@ -27,10 +35,6 @@
     },
     {
       "name": "MLA",
-      "count": 2
-    },
-    {
-      "name": "MoE",
       "count": 2
     },
     {
@@ -54,6 +58,14 @@
       "count": 1
     },
     {
+      "name": "FSDP",
+      "count": 1
+    },
+    {
+      "name": "PyTorch",
+      "count": 1
+    },
+    {
       "name": "RMSNorm",
       "count": 1
     },
@@ -63,6 +75,35 @@
     }
   ],
   "articles": [
+    {
+      "id": "gpu_allreduce_guide",
+      "slug": "gpu_allreduce_guide",
+      "filename": "gpu_allreduce_guide.html",
+      "path": "articles/gpu_allreduce_guide.html",
+      "title": "深入图解 GPU 间 AllReduce 通信：Ring 算法与大模型实战",
+      "category": "AI 工程与评测",
+      "tags": [
+        "大模型",
+        "FSDP",
+        "MoE",
+        "PyTorch"
+      ],
+      "summary": "多卡训练和推理大模型时，成百上千张 GPU 不能各自闷头算，必须高频“对账汇总”。AllReduce 就是多卡世界里最重要、最频繁的一条神经动脉——把所有卡上的局部结果规约求和，并让每一张卡都同步拿到完整总和。",
+      "headings": [
+        "GPU 之间的 AllReduce 通信是什么？从集合通信家族到 Ring-AllReduce 与大模型实战",
+        "一句话看懂 AllReduce，以及它和“兄弟们”的区别",
+        "工业界王牌算法：Ring-AllReduce（环形全规约）",
+        "AllReduce 在大模型训练与推理中的两大核心战场",
+        "硬件带宽、跳数延迟与算法耗时对比计算器"
+      ],
+      "content": "GPU 间 AllReduce 集合通信图解 01 什么是 AllReduce 02 Ring-AllReduce 动画 03 大模型 TP / DDP 实战 04 NVLink 与耗时计算器 正在初始化… 分布式训练与多卡推理核心原语 · 一次秒开加固版 GPU 之间的 AllReduce 通信是什么？ 从集合通信家族到 Ring-AllReduce 与大模型实战 多卡训练和推理大模型时，成百上千张 GPU 不能各自闷头算，必须高频“对账汇总”。AllReduce 就是多卡世界里最重要、最频繁的一条神经动脉——把所有卡上的局部结果规约求和，并让每一张卡都同步拿到完整总和。 All + Reduce = 全卡汇总 Ring-AllReduce 2(N-1)/N Reduce-Scatter + AllGather 张量并行 TP (2L 次/步) NVLink vs InfiniBand 01 一句话看懂 AllReduce，以及它和“兄弟们”的区别 拆开名字就秒懂：Reduce（规约）指把多张卡上相同位置的数字合并（最常见是求和 Sum 或求平均 Avg）；All（全部）指最终结果不是只交 给 1 张主卡，而是每一张 GPU 都拿到一份完全相同的最终汇总结果。 交互实验 1：GPU 集合通信家族对比图（4 卡视角） 点击切换 4 种最易混淆的原语 观察 4 张 GPU 在通信前（左）与通信后（右）手里张量块的变化，一次性彻底分清分布式训练中的四大核心通信！ AllReduce（TP / DDP 核心） Reduce-Scatter（FSDP / ZeRO） AllGather（FSDP 拼权重） All-to-All（MoE 专家并行） 02 工业界王牌算法：Ring-AllReduce（环形全规约） 如果让所有 GPU 都把数据发给 GPU 0 求和再广播回去，GPU 0 的网卡会瞬间堵爆（耗时随卡数 N 暴涨）。天才的 Ring-AllReduce 把 N 张卡连成一条单向环形接力赛道，将张量切成 N 块，拆成 Reduce-Scatter（N-1 步）+ AllGather（N-1 步），让所有卡的带宽同时 100% 跑满！ 交互实验 2：Ring-AllReduce 6 步逐帧推演（十进制密码版！） 一眼看清哪几张卡已累加 巧妙编码：GPU 0 = [1,2,3,4]，GPU 1 = [10,20,30,40]，GPU 2 = [100,…]，GPU 3 = [1000,…]。看数字变成 1111, 2222, 3333, 4444 就知道 4 张卡全部集齐！ ← 上一步 下一步 → ▶ 自动播放 重置 STEP 0初始状态 RS 1/3传递+累加 RS 2/3传递+累加 RS 3/3各得 1 块完整 AG 1/3纯覆盖扩散 AG 2/3纯覆盖扩散 AG 3/3全卡对齐 ✓ 每卡总发送量 = 2 · (N - 1) · (S / N) = 2 · ((N-1)/N) · S ≈ 2S（与卡数 N 无关！） 03 AllReduce 在大模型训练与推理中的两大核心战场 为什么前面我们聊深模型推理慢时反复提到“每层 2 次 AllReduce”？点击下方切换查看 AllReduce 在 张量并行（TP） 与 数据并行（DDP / FSDP） 里的真实工作现场。 交互实验 3：大模型分布式并行中的 AllReduce 透视 Megatron-LM / PyTorch 实战 战场 A：张量并行 TP（推理与训练每层 2 次） 战场 B：数据并行 DDP（同步梯度 & 进化为 FSDP） 04 硬件带宽、跳数延迟与算法耗时对比计算器 虽然 Ring-AllReduce 在带宽上近乎完美（2S/B），但当 GPU 扩到 64~256 张、且单次张量很小（如 TP 推理的激活值）时，Ring 绕圈的跳数延迟 2(N-1)·α 就会暴露短板——这正是现代 NCCL 引入 Tree-AllReduce（双二叉树） 与 NVLink Switch 硬件网内规约（SHARP） 的原因！ 参与通信的 GPU 数量 N8 张卡 2 张 GPU 4 张 GPU 8 张 GPU（标准单机 8 卡节点） 16 张 GPU（2 机互联） 64 张 GPU（8 机集群） 256 张 GPU（32 机大规模训练） 单次 AllReduce 张量大小 S64 MB 0.5MB(TP小)4MB16MB64MB256MB2GB(DDP大) GPU 互联硬件总线NVLink 4.0 (H100) PCIe 4.0 x16（单向 ~25 GB/s，延迟 ~12 μs） InfiniBand NDR 400G（单向 ~50 GB/s，跨机延迟 ~8 μs） NVLink 4.0 · H100 机内（单向 ~450 GB/s，延迟 ~2 μs） NVLink 5.0 · B200 机内（单向 ~900 GB/s，延迟 ~1.5 μs） 理论单次 AllReduce 耗时对比（越短越快） α-β 通信模型 公式说明（α = 单跳启动延迟，B = 单向有效带宽）： • 朴素中心化 Master：2(N-1)·(S/B + α)（主卡带宽成死结） • Ring-AllReduce：2·((N-1)/N)·(S/B) + 2(N-1)·α（大张量带宽最优） • Tree-AllReduce (NCCL)：2·(S/B) + 2·log₂(N)·α（大集群小张量低延迟） • NVLS 网内硬件规约：交换机芯片直接做加法，流量趋近 1·S/B！ 单文件离线交互式图解 · GPU 集合通信专题（一次秒开加固架构：零 CDN / 无 svg.innerHTML / 独立异常隔离）",
+      "wordCount": 1142,
+      "readingTime": 3,
+      "sizeBytes": 60585,
+      "createdAt": "2026-11-26T15:11:29Z",
+      "updatedAt": "2026-11-26T15:11:30Z",
+      "contentHash": "bdfe4a4bc783"
+    },
     {
       "id": "llm_ffn_moe_params",
       "slug": "llm_ffn_moe_params",
