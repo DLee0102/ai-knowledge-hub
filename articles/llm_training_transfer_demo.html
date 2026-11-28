@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>实拍一次大模型训练的数据传输：Llama 3 8B 四卡 Ring AllReduce 与重叠流水线</title>
+<style>
+  :root {
+    --bg: #080c16;
+    --bg-elev: #0f1626;
+    --card: #131c31;
+    --border: rgba(148, 163, 184, 0.16);
+    --border-strong: rgba(148, 163, 184, 0.34);
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+
+    --cyan: #38bdf8;
+    --cyan-soft: rgba(56, 189, 248, 0.14);
+    --emerald: #34d399;
+    --emerald-soft: rgba(52, 211, 153, 0.14);
+    --violet: #a78bfa;
+    --violet-soft: rgba(167, 139, 250, 0.15);
+    --amber: #fbbf24;
+    --amber-soft: rgba(251, 191, 36, 0.14);
+    --rose: #fb7185;
+    --rose-soft: rgba(251, 113, 133, 0.14);
+
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-sans);
+    background:
+      radial-gradient(ellipse 80% 50% at 15% -10%, rgba(52, 211, 153, 0.12), transparent 60%),
+      radial-gradient(ellipse 75% 50% at 85% 0%, rgba(251, 191, 36, 0.09), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .noscript-bar {
+    background: #7f1d1d; color: #fecaca; padding: 14px 20px;
+    text-align: center; font-size: 14px; font-weight: 600;
+    border-bottom: 1px solid #ef4444;
+  }
+
+  /* Navbar */
+  .navbar {
+    position: sticky; top: 0; z-index: 100;
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    background: rgba(8, 12, 22, 0.82);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1200px; margin: 0 auto; padding: 12px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; flex-wrap: wrap;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 15px; color: var(--text); text-decoration: none;
+  }
+  .brand-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--emerald), var(--amber));
+    box-shadow: 0 0 12px var(--emerald);
+  }
+  .nav-links { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .nav-links a {
+    text-decoration: none; color: var(--text-muted); font-size: 13px; font-weight: 500;
+    padding: 6px 12px; border-radius: 999px; transition: all 0.2s; border: 1px solid transparent;
+  }
+  .nav-links a:hover { color: var(--text); background: rgba(255,255,255,0.06); border-color: var(--border); }
+  .status-pill {
+    font-size: 11.5px; font-family: var(--font-mono); padding: 4px 10px;
+    border-radius: 999px; background: var(--amber-soft); color: var(--amber);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+  }
+  .status-pill.ok {
+    background: var(--emerald-soft); color: var(--emerald);
+    border-color: rgba(52, 211, 153, 0.38);
+  }
+
+  /* Layout */
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* Hero */
+  .hero { padding: 54px 0 34px; text-align: center; }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    color: var(--emerald); background: var(--emerald-soft);
+    border: 1px solid rgba(52, 211, 153, 0.35); margin-bottom: 16px;
+  }
+  .hero h1 {
+    font-size: clamp(26px, 4.1vw, 43px);
+    font-weight: 800; letter-spacing: -0.02em; line-height: 1.22; margin-bottom: 14px;
+    background: linear-gradient(135deg, #ffffff 10%, #a7f3d0 50%, #fde68a 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .hero p { max-width: 820px; margin: 0 auto 22px; font-size: 15.5px; color: var(--text-muted); }
+
+  /* Spec Banner */
+  .spec-strip {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 24px;
+  }
+  .spec-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px; text-align: left;
+  }
+  .spec-box .sl { font-size: 11.5px; color: var(--text-muted); }
+  .spec-box .sv { font-family: var(--font-mono); font-size: 17px; font-weight: 800; margin: 3px 0; }
+  .spec-box .sd { font-size: 11.5px; color: var(--text-dim); }
+
+  /* Sections */
+  section { margin-top: 54px; scroll-margin-top: 76px; }
+  .section-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 10px; }
+  .section-num {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+    color: var(--emerald); background: var(--emerald-soft);
+    border: 1px solid rgba(52, 211, 153, 0.35); padding: 3px 10px; border-radius: 999px;
+  }
+  .section-head h2 { font-size: clamp(21px, 2.5vw, 28px); font-weight: 700; letter-spacing: -0.01em; }
+  .section-desc { color: var(--text-muted); font-size: 15px; max-width: 920px; margin-bottom: 20px; }
+
+  /* Cards & Tags */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow);
+  }
+  .card + .card { margin-top: 20px; }
+  .card-sub {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 18px;
+  }
+  .card-title {
+    font-size: 16px; font-weight: 700; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .tag {
+    font-size: 11px; font-family: var(--font-mono);
+    padding: 2px 8px; border-radius: 999px; font-weight: 600;
+  }
+  .tag-cyan { background: var(--cyan-soft); color: var(--cyan); border: 1px solid rgba(56,189,248,0.32); }
+  .tag-emerald { background: var(--emerald-soft); color: var(--emerald); border: 1px solid rgba(52,211,153,0.32); }
+  .tag-violet { background: var(--violet-soft); color: var(--violet); border: 1px solid rgba(167,139,250,0.32); }
+  .tag-amber { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(251,191,36,0.32); }
+  .tag-rose { background: var(--rose-soft); color: var(--rose); border: 1px solid rgba(251,113,133,0.32); }
+
+  /* Controls */
+  .btn-group {
+    display: inline-flex; background: var(--bg); padding: 4px;
+    border-radius: 10px; border: 1px solid var(--border); gap: 4px; flex-wrap: wrap;
+  }
+  .btn {
+    border: none; background: transparent; color: var(--text-muted);
+    font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+    padding: 7px 13px; border-radius: 7px; cursor: pointer; transition: all 0.2s;
+  }
+  .btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+  .btn.active {
+    background: linear-gradient(135deg, rgba(52,211,153,0.24), rgba(56,189,248,0.22));
+    color: #fff; border: 1px solid rgba(52,211,153,0.48);
+    box-shadow: 0 0 16px rgba(52,211,153,0.16);
+  }
+  .btn-action {
+    background: linear-gradient(135deg, #059669, #0284c7);
+    color: #fff; border: none; padding: 8px 15px; border-radius: 9px;
+    font-size: 13px; font-weight: 700; cursor: pointer; transition: transform 0.15s, filter 0.2s;
+  }
+  .btn-action:hover { filter: brightness(1.12); transform: translateY(-1px); }
+  .btn-action:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
+  .btn-ghost {
+    background: rgba(255,255,255,0.05); color: var(--text);
+    border: 1px solid var(--border); padding: 8px 13px; border-radius: 9px;
+    font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); border-color: var(--border-strong); }
+
+  select {
+    background: #070b14; color: var(--text); border: 1px solid var(--border-strong);
+    border-radius: 8px; padding: 7px 10px; font-family: var(--font-mono);
+    font-size: 12.5px; outline: none;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--emerald); cursor: pointer; }
+
+  .flex-between { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .grid-2-ring { display: grid; grid-template-columns: 0.94fr 1.06fr; gap: 20px; align-items: start; }
+
+  .svg-stage {
+    width: 100%; background: #070b14;
+    border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px; overflow-x: auto; margin-top: 14px;
+  }
+  .callout-emerald {
+    background: rgba(52, 211, 153, 0.08); border-left: 3px solid var(--emerald);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #d1fae5; margin-top: 14px;
+  }
+  .callout-cyan {
+    background: rgba(56, 189, 248, 0.08); border-left: 3px solid var(--cyan);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #e0f2fe; margin-top: 14px;
+  }
+  .callout-amber {
+    background: rgba(251, 191, 36, 0.08); border-left: 3px solid var(--amber);
+    border-radius: 0 10px 10px 0; padding: 12px 15px; font-size: 13.5px; color: #fef3c7; margin-top: 14px;
+  }
+
+  /* Stage Selector */
+  .stage-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+  .stage-btn {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 11px; padding: 12px; text-align: left; cursor: pointer;
+    color: var(--text); transition: all 0.2s; font-family: var(--font-sans);
+  }
+  .stage-btn:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .stage-btn.active {
+    background: linear-gradient(135deg, rgba(52,211,153,0.18), rgba(56,189,248,0.12));
+    border-color: var(--emerald); box-shadow: 0 0 18px rgba(52,211,153,0.16);
+  }
+  .stage-btn .sn { font-family: var(--font-mono); font-size: 11px; color: var(--emerald); font-weight: 800; }
+  .stage-btn .st { font-size: 14px; font-weight: 700; margin-top: 2px; }
+  .stage-btn .sd { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; }
+
+  /* 8-step Bucket Timeline */
+  .b-timeline { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-top: 14px; }
+  .bt-item {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 9px; padding: 7px 4px; text-align: center; cursor: pointer;
+    font-size: 11px; transition: all 0.2s;
+  }
+  .bt-item:hover { border-color: var(--border-strong); }
+  .bt-item.active {
+    background: rgba(56,189,248,0.22); border-color: var(--cyan); color: #fff;
+    box-shadow: 0 0 14px rgba(56,189,248,0.2);
+  }
+  .bt-item .tm { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+  .bt-item.active .tm { color: var(--cyan); }
+  .bt-item strong { display: block; margin-top: 2px; }
+
+  /* GPU Bucket Trays */
+  .gpu-tray-list { display: flex; flex-direction: column; gap: 9px; }
+  .gpu-tray {
+    background: #070b14; border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .tray-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; font-weight: 700; margin-bottom: 7px;
+  }
+  .tray-chunks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .t-chunk {
+    border-radius: 7px; padding: 7px 4px; text-align: center;
+    font-family: var(--font-mono); font-size: 11.5px; font-weight: 700;
+    border: 1px solid var(--border); background: var(--bg-elev); transition: all 0.25s;
+  }
+  .t-chunk .tc-sub { display: block; font-size: 9.5px; color: var(--text-dim); font-weight: 500; margin-top: 2px; }
+  .t-chunk.upd {
+    background: rgba(251,191,36,0.2); border-color: var(--amber); color: #fef3c7;
+    transform: translateY(-2px); box-shadow: 0 0 12px rgba(251,191,36,0.24);
+  }
+  .t-chunk.full {
+    background: rgba(52,211,153,0.18); border-color: var(--emerald); color: #d1fae5;
+  }
+  .t-chunk.avg {
+    background: rgba(167,139,250,0.22); border-color: var(--violet); color: #fff;
+  }
+
+  /* Compare Mini Bars */
+  .cmp-bar-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+  .cmp-box {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .bar-track { height: 11px; background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden; margin-top: 7px; }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width 0.3s ease; }
+
+  /* Overlap Metrics */
+  .kpi-row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+  .kpi-box {
+    background: #070b14; border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px; text-align: center;
+  }
+  .kpi-box .kl { font-size: 11.5px; color: var(--text-muted); }
+  .kpi-box .kv { font-family: var(--font-mono); font-size: 20px; font-weight: 800; margin: 3px 0; }
+  .kpi-box .ks { font-size: 11px; color: var(--text-dim); }
+
+  footer {
+    margin-top: 64px; text-align: center; font-size: 13px;
+    color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 24px;
+  }
+
+  @media (max-width: 960px) {
+    .spec-strip, .stage-bar, .grid-2, .grid-2-ring, .cmp-bar-grid, .kpi-row-3 { grid-template-columns: 1fr; }
+    .b-timeline { grid-template-columns: repeat(4, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .container { padding: 0 16px 64px; }
+    .card { padding: 16px; }
+    .b-timeline { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+  <meta name="ai-title" content="实拍一次大模型训练的数据传输：Llama 3 8B 四卡 Ring AllReduce 与重叠流水线" />
+  <meta name="ai-category" content="训练与微调" />
+  <meta name="ai-tags" content="大模型, FSDP, PyTorch" />
+  <meta name="description" content="把抽象的 Ring AllReduce 放进真实工程现场——跟拍 Llama 3 8B（32 层 / BF16）在 4 张 GPU（rank 0 ~ 3）上跑完 1 个训练 Step：前向 0 通信、反向每层 400 MB 梯度分桶、6 轮 100 MB 环形搬运、计算与通信双跑道重叠，以及 FSDP 如何拦腰劈开省下…" />
+  <meta name="ai-created" content="2026-11-28T15:04:43Z" />
+  <meta name="ai-updated" content="2026-11-28T15:04:45Z" />
+</head>
+<body>
+
+<noscript>
+  <div class="noscript-bar">
+    ⚠️ 当前预览环境禁用了 JavaScript。请右键此文件并用 Chrome / Edge / Firefox 浏览器打开以运行交互动画！
+  </div>
+</noscript>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <a href="#" class="brand">
+      <span class="brand-dot"></span>
+      Llama 3 8B 四卡训练数据传输实拍
+    </a>
+    <div class="nav-links">
+      <a href="#sec-overview">01 四阶段全景</a>
+      <a href="#sec-bucket">02 400MB桶实录</a>
+      <a href="#sec-overlap">03 双流重叠时间线</a>
+      <a href="#sec-fsdp">04 DDP vs FSDP</a>
+      <span class="status-pill" id="bootStatus">正在初始化…</span>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="hero-badge">真实训练案例可视化 · Llama 3 8B × 4 卡数据并行（DDP / FSDP）</div>
+    <h1>实拍一次大模型训练的数据传输：<br />15 GB 梯度如何在 4 张 GPU 间毫秒级流转？</h1>
+    <p>把抽象的 Ring AllReduce 放进真实工程现场——跟拍 <strong>Llama 3 8B（32 层 / BF16）</strong>在 4 张 GPU（<code>rank 0 ~ 3</code>）上跑完 1 个训练 Step：前向 0 通信、反向每层 <strong>400 MB 梯度分桶</strong>、<strong>6 轮 100 MB 环形搬运</strong>、<strong>计算与通信双跑道重叠</strong>，以及 FSDP 如何拦腰劈开省下 75% 显存！</p>
+
+    <div class="spec-strip">
+      <div class="spec-box">
+        <div class="sl">训练模型与精度</div>
+        <div class="sv" style="color:var(--cyan);">Llama 3 8B (BF16)</div>
+        <div class="sd">32 层 · 8.03B 参数 · 每参数 2 字节</div>
+      </div>
+      <div class="spec-box">
+        <div class="sl">全模型整份梯度大小</div>
+        <div class="sv" style="color:var(--amber);">≈ 15 GB (16.06GB)</div>
+        <div class="sd">每卡 Ring 总发送 ≈ 22.5 GB</div>
+      </div>
+      <div class="spec-box">
+        <div class="sl">单层梯度桶（Bucket）</div>
+        <div class="sv" style="color:var(--emerald);">400 MB / 桶</div>
+        <div class="sd">切 4 块 = 每块 100 MB · 6 轮发 600 MB</div>
+      </div>
+      <div class="spec-box">
+        <div class="sl">4 卡集群配置</div>
+        <div class="sv" style="color:var(--violet);">rank 0 / 1 / 2 / 3</div>
+        <div class="sd">支持切换 NVLink / 400G IB / PCIe 实测</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========================================================
+       SECTION 01: 4-STAGE STORYBOARD OF ONE TRAINING STEP
+       ======================================================== -->
+  <section id="sec-overview">
+    <div class="section-head">
+      <span class="section-num">01</span>
+      <h2>全景导览：一次训练迭代（Step t）的 4 个真实阶段</h2>
+    </div>
+    <p class="section-desc">
+      点击下方 4 个阶段按钮，鸟瞰 4 张 GPU 从“各读各的语料”到“梯度同步求平均”再到“权重完全一致更新”的完整闭环。
+    </p>
+
+    <div class="card">
+      <div class="stage-bar" id="storyTabs">
+        <button class="stage-btn active" data-st="0">
+          <div class="sn">STAGE 1 · FORWARD</div>
+          <div class="st">前向传播（0 通信）</div>
+          <div class="sd">4 卡各自吃不同语料，互不说话</div>
+        </button>
+        <button class="stage-btn" data-st="1">
+          <div class="sn">STAGE 2 · BUCKET RING</div>
+          <div class="st">反向分桶 + 环形同步</div>
+          <div class="sd">算完 L32 立刻打包 400MB 跑 Ring</div>
+        </button>
+        <button class="stage-btn" data-st="2">
+          <div class="sn">STAGE 3 · OVERLAP</div>
+          <div class="st">双跑道高度重叠</div>
+          <div class="sd">算 L31 同时传 L32，藏掉 96% 通信</div>
+        </button>
+        <button class="stage-btn" data-st="3">
+          <div class="sn">STAGE 4 · ADAMW STEP</div>
+          <div class="st">同步更新参数权重</div>
+          <div class="sd">4 卡拿到逐比特一致梯度，权重对齐</div>
+        </button>
+      </div>
+
+      <div class="svg-stage" id="storySvgWrap"></div>
+      <div id="storyExplain" class="callout-emerald"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 02: ZOOM INTO 400MB BUCKET (6 ROUNDS + LIVE CLOCK)
+       ======================================================== -->
+  <section id="sec-bucket">
+    <div class="section-head">
+      <span class="section-num">02</span>
+      <h2>放大镜实拍：第 32 层「400 MB 梯度桶」的毫秒级搬运</h2>
+    </div>
+    <p class="section-desc">
+      当第 32 层反向算完，4 张卡各自手握一份 <code>400 MB</code> 局部梯度，立即切成 4 块 <code>[a, b, c, d]</code>（<strong>每块刚好 100 MB</strong>），沿单向逻辑环跑完 3 轮 ReduceScatter + 3 轮 AllGather + 除以 4 求平均。切换下方互联总线，观察真实毫秒时钟变化！
+    </p>
+
+    <div class="card">
+      <div class="flex-between">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="font-size:13px;font-weight:700;color:var(--text-muted);">选择卡间互联硬件：</span>
+          <select id="bucketLinkSel">
+            <option value="nvlink" selected>H100 NVLink (400 GB/s · 每轮 0.25 ms)</option>
+            <option value="ib">跨机 IB 400G (50 GB/s · 每轮 2.00 ms)</option>
+            <option value="pcie">普通 PCIe 4.0 (25 GB/s · 每轮 4.00 ms)</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-ghost" id="btnBPrev">← 上一轮</button>
+          <button class="btn-action" id="btnBNext">下一轮 →</button>
+          <button class="btn-ghost" id="btnBPlay">▶ 自动播放</button>
+          <button class="btn-ghost" id="btnBReset">重置</button>
+        </div>
+      </div>
+
+      <!-- 8-Step Clickable Timeline -->
+      <div class="b-timeline" id="bucketTimeline">
+        <div class="bt-item active" data-bs="0"><span class="tm" id="btm0">0.00ms</span><strong>切分400MB</strong></div>
+        <div class="bt-item" data-bs="1"><span class="tm" id="btm1">0.25ms</span><strong>RS 第1轮</strong></div>
+        <div class="bt-item" data-bs="2"><span class="tm" id="btm2">0.50ms</span><strong>RS 第2轮</strong></div>
+        <div class="bt-item" data-bs="3"><span class="tm" id="btm3">0.75ms</span><strong>RS 第3轮</strong></div>
+        <div class="bt-item" data-bs="4"><span class="tm" id="btm4">1.00ms</span><strong>AG 第4轮</strong></div>
+        <div class="bt-item" data-bs="5"><span class="tm" id="btm5">1.25ms</span><strong>AG 第5轮</strong></div>
+        <div class="bt-item" data-bs="6"><span class="tm" id="btm6">1.50ms</span><strong>AG 第6轮</strong></div>
+        <div class="bt-item" data-bs="7"><span class="tm" id="btm7">1.50ms</span><strong>÷4 平均✓</strong></div>
+      </div>
+
+      <div class="grid-2-ring" style="margin-top:16px;">
+        <div>
+          <div class="svg-stage" style="margin-top:0;" id="bucketRingSvgWrap"></div>
+        </div>
+        <div class="gpu-tray-list" id="bucketGpuTrays"></div>
+      </div>
+
+      <div id="bucketExplain" class="callout-cyan"></div>
+
+      <!-- Ring vs Naive Comparison for this 400 MB bucket -->
+      <div class="cmp-bar-grid" id="bucketCmpGrid"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 03: COMPUTE-COMMUNICATION OVERLAP GANTT SIMULATOR
+       ======================================================== -->
+  <section id="sec-overlap">
+    <div class="section-head">
+      <span class="section-num">03</span>
+      <h2>工程绝招：计算引擎 vs. 通信引擎「双跑道重叠」甘特图</h2>
+    </div>
+    <p class="section-desc">
+      GPU 内部的计算核心（Tensor Core）和通信引擎（NVLink / RDMA DMA）互不干扰。拖动下方滑块切换<strong>是否开启分桶重叠</strong>、<strong>单层反向计算时长</strong>以及<strong>互联带宽</strong>，亲眼看前 31 层的通信是如何被藏进计算时间里，以及带宽太低时为何会突然发生“通信排队拥堵”！
+    </p>
+
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:14px;">
+        <div class="btn-group" id="overlapModeTabs">
+          <button class="btn active" data-om="on">✓ 开启分桶重叠（真实 PyTorch DDP）</button>
+          <button class="btn" data-om="off">✗ 关闭重叠（傻等 32 层全算完再传）</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="font-size:12.5px;color:var(--text-muted);font-weight:700;">互联总线：</span>
+          <select id="ovLinkSel">
+            <option value="nvlink" selected>H100 NVLink (400 GB/s → 1.5 ms/桶)</option>
+            <option value="ib">跨机 IB 400G (50 GB/s → 12.0 ms/桶)</option>
+            <option value="pcie">普通 PCIe 4.0 (25 GB/s → 24.0 ms/桶)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card-sub" style="margin-bottom:14px;">
+        <div class="flex-between" style="font-size:13px;font-weight:600;margin-bottom:6px;">
+          <span>单层反向传播计算耗时（随 Micro-Batch / 序列长度变化）</span>
+          <span style="font-family:var(--font-mono);color:var(--emerald);font-weight:800;" id="ovCompVal">6.0 ms / 层（32 层共 192 ms）</span>
+        </div>
+        <input type="range" id="ovCompSlider" min="2" max="26" step="1" value="6" />
+        <div style="display:flex;justify-content:space-between;font-size:11px;font-family:var(--font-mono);color:var(--text-dim);margin-top:3px;">
+          <span>2ms (极小Batch)</span><span>6ms (常规)</span><span>14ms (较大Batch)</span><span>26ms (超大Batch/长上下文)</span>
+        </div>
+      </div>
+
+      <!-- Dual-Track Gantt SVG -->
+      <div class="svg-stage" id="ganttSvgWrap"></div>
+
+      <!-- 3 Live Telemetry KPIs -->
+      <div class="kpi-row-3" id="overlapKpis"></div>
+
+      <div id="overlapNote" class="callout-amber"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       SECTION 04: DDP VS FSDP (ZERO-3) MEMORY & RING SPLIT
+       ======================================================== -->
+  <section id="sec-fsdp">
+    <div class="section-head">
+      <span class="section-num">04</span>
+      <h2>从 8B 迈向百亿/千亿：FSDP 如何把 Ring AllReduce 拦腰劈成两半？</h2>
+    </div>
+    <p class="section-desc">
+      训练 Llama 3 8B 时，光 BF16 权重（16 GB）+ 梯度（16 GB）+ FP32 AdamW 优化器状态（96 GB）就要占掉整整 <strong>128 GB</strong>（单张 80GB H100 直接爆显存！）。切换下方 <strong>DDP vs. FSDP</strong>，看现代分布式框架如何仅靠“拆开 Ring 的前后两半”，就让单卡显存直降 4 倍！
+    </p>
+
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:14px;">
+        <div class="btn-group" id="fsdpTabs">
+          <button class="btn" data-ft="ddp">经典 DDP（完整 Ring：单卡 128 GB 爆显存！）</button>
+          <button class="btn active" data-ft="fsdp">现代 FSDP / ZeRO-3（劈开 Ring：单卡仅 32 GB ✓）</button>
+        </div>
+        <span class="tag tag-violet">Llama 3 8B 混合精度训练状态 · 4 × H100 (80GB)</span>
+      </div>
+
+      <div class="svg-stage" id="fsdpSvgWrap"></div>
+      <div id="fsdpNote" class="callout-emerald"></div>
+    </div>
+  </section>
+
+  <footer>
+    单文件离线交互式图解 · Llama 3 8B 四卡训练传输实拍（一次秒开加固架构：零 CDN / 无 svg.innerHTML / 异常隔离）
+  </footer>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  function renderSvgInto(wrapId, viewBox, minW, inner) {
+    var el = document.getElementById(wrapId);
+    if (!el) return;
+    el.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + viewBox + '" width="100%" ' +
+      'style="min-width:' + minW + 'px;display:block;">' + inner + '</svg>';
+  }
+
+  /* =========================================================
+     MODULE 1: 4-STAGE OVERVIEW STORYBOARD
+     ========================================================= */
+  var STORIES = [
+    {
+      svg:
+        '<text x="440" y="24" fill="#34d399" font-size="13.5" font-weight="800" text-anchor="middle">阶段 1：前向传播（Forward）—— 4 张卡各读各的数据，全程 0 字节通信！</text>' +
+        '<g transform="translate(26, 44)">' +
+          '<rect x="0" y="0" width="188" height="140" rx="11" fill="rgba(56,189,248,0.12)" stroke="#38bdf8" stroke-width="1.8"/>' +
+          '<text x="94" y="26" fill="#38bdf8" font-size="13" font-family="monospace" font-weight="800" text-anchor="middle">rank 0 (GPU 0)</text>' +
+          '<rect x="18" y="38" width="152" height="28" rx="6" fill="rgba(56,189,248,0.2)"/>' +
+          '<text x="94" y="56" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">语料：📰 新闻批次</text>' +
+          '<text x="94" y="88" fill="#cbd5e1" font-size="11" text-anchor="middle">独立跑完 L1 → L32</text>' +
+          '<text x="94" y="112" fill="#34d399" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">算出 Loss₀</text>' +
+          '<text x="94" y="130" fill="#64748b" font-size="10" text-anchor="middle">网络流量: 0 B</text>' +
+        '</g>' +
+        '<g transform="translate(238, 44)">' +
+          '<rect x="0" y="0" width="188" height="140" rx="11" fill="rgba(52,211,153,0.12)" stroke="#34d399" stroke-width="1.8"/>' +
+          '<text x="94" y="26" fill="#34d399" font-size="13" font-family="monospace" font-weight="800" text-anchor="middle">rank 1 (GPU 1)</text>' +
+          '<rect x="18" y="38" width="152" height="28" rx="6" fill="rgba(52,211,153,0.2)"/>' +
+          '<text x="94" y="56" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">语料：💻 Python代码</text>' +
+          '<text x="94" y="88" fill="#cbd5e1" font-size="11" text-anchor="middle">独立跑完 L1 → L32</text>' +
+          '<text x="94" y="112" fill="#34d399" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">算出 Loss₁</text>' +
+          '<text x="94" y="130" fill="#64748b" font-size="10" text-anchor="middle">网络流量: 0 B</text>' +
+        '</g>' +
+        '<g transform="translate(450, 44)">' +
+          '<rect x="0" y="0" width="188" height="140" rx="11" fill="rgba(167,139,250,0.12)" stroke="#a78bfa" stroke-width="1.8"/>' +
+          '<text x="94" y="26" fill="#a78bfa" font-size="13" font-family="monospace" font-weight="800" text-anchor="middle">rank 2 (GPU 2)</text>' +
+          '<rect x="18" y="38" width="152" height="28" rx="6" fill="rgba(167,139,250,0.2)"/>' +
+          '<text x="94" y="56" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">语料：📐 数学论文</text>' +
+          '<text x="94" y="88" fill="#cbd5e1" font-size="11" text-anchor="middle">独立跑完 L1 → L32</text>' +
+          '<text x="94" y="112" fill="#34d399" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">算出 Loss₂</text>' +
+          '<text x="94" y="130" fill="#64748b" font-size="10" text-anchor="middle">网络流量: 0 B</text>' +
+        '</g>' +
+        '<g transform="translate(662, 44)">' +
+          '<rect x="0" y="0" width="188" height="140" rx="11" fill="rgba(251,191,36,0.12)" stroke="#fbbf24" stroke-width="1.8"/>' +
+          '<text x="94" y="26" fill="#fbbf24" font-size="13" font-family="monospace" font-weight="800" text-anchor="middle">rank 3 (GPU 3)</text>' +
+          '<rect x="18" y="38" width="152" height="28" rx="6" fill="rgba(251,191,36,0.2)"/>' +
+          '<text x="94" y="56" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">语料：📚 百科问答</text>' +
+          '<text x="94" y="88" fill="#cbd5e1" font-size="11" text-anchor="middle">独立跑完 L1 → L32</text>' +
+          '<text x="94" y="112" fill="#34d399" font-size="11.5" font-family="monospace" font-weight="700" text-anchor="middle">算出 Loss₃</text>' +
+          '<text x="94" y="130" fill="#64748b" font-size="10" text-anchor="middle">网络流量: 0 B</text>' +
+        '</g>',
+      note: '<strong>阶段 1（前向传播）：</strong>在 DDP 数据并行下，4 张 GPU 持有完全相同的 Llama 3 8B 初始权重，各自消化不同的训练样本、各自算出本地 Loss，<strong>彼此零通信</strong>，算力利用率拉满！'
+    },
+    {
+      svg:
+        '<text x="440" y="24" fill="#38bdf8" font-size="13.5" font-weight="800" text-anchor="middle">阶段 2：反向从 L32 倒算 → 每凑满 400 MB 梯度桶立刻发车跑 Ring AllReduce！</text>' +
+        '<rect x="32" y="52" width="188" height="118" rx="11" fill="rgba(167,139,250,0.14)" stroke="#a78bfa" stroke-width="1.8"/>' +
+        '<text x="126" y="82" fill="#ede9fe" font-size="13" font-weight="700" text-anchor="middle">反向刚算完 Layer 32</text>' +
+        '<text x="126" y="106" fill="#c4b5fd" font-size="12" font-family="monospace" text-anchor="middle">每卡产出 400 MB 梯度</text>' +
+        '<text x="126" y="130" fill="#94a3b8" font-size="11" text-anchor="middle">绝不等 15GB 全算完!</text>' +
+        '<text x="126" y="150" fill="#fbbf24" font-size="11" font-weight="700" text-anchor="middle">立即打包成 Bucket #1</text>' +
+        '<line x1="220" y1="111" x2="270" y2="111" stroke="#38bdf8" stroke-width="2.4"/>' +
+        '<polygon points="270,105 282,111 270,117" fill="#38bdf8"/>' +
+        '<rect x="284" y="46" width="320" height="130" rx="12" fill="rgba(56,189,248,0.14)" stroke="#38bdf8" stroke-width="2"/>' +
+        '<text x="444" y="74" fill="#fff" font-size="13.5" font-weight="800" text-anchor="middle">后台异步拉起 Ring AllReduce</text>' +
+        '<text x="444" y="98" fill="#7dd3fc" font-size="12" font-family="monospace" text-anchor="middle">400MB 切 4 块 = 每块 100MB</text>' +
+        '<text x="444" y="122" fill="#d1fae5" font-size="11.5" text-anchor="middle">3 轮 ReduceScatter + 3 轮 AllGather</text>' +
+        '<text x="444" y="144" fill="#fbbf24" font-size="12" font-family="monospace" font-weight="700" text-anchor="middle">每卡仅发 600MB → NVLink 仅 1.50 ms!</text>' +
+        '<line x1="604" y1="111" x2="650" y2="111" stroke="#34d399" stroke-width="2.4"/>' +
+        '<polygon points="650,105 662,111 650,117" fill="#34d399"/>' +
+        '<rect x="664" y="52" width="188" height="118" rx="11" fill="rgba(52,211,153,0.16)" stroke="#34d399" stroke-width="2"/>' +
+        '<text x="758" y="84" fill="#fff" font-size="13" font-weight="800" text-anchor="middle">L32 梯度对齐 ✓</text>' +
+        '<text x="758" y="108" fill="#a7f3d0" font-size="11.5" font-family="monospace" text-anchor="middle">g_avg = Σg / 4</text>' +
+        '<text x="758" y="132" fill="#cbd5e1" font-size="11" text-anchor="middle">4 张卡得到完全一致的</text>' +
+        '<text x="758" y="150" fill="#34d399" font-size="11.5" font-weight="700" text-anchor="middle">400 MB 平均梯度</text>',
+      note: '<strong>阶段 2（梯度分桶 + 异步 Ring）：</strong>为了避免“每次只传 1 个小矩阵延迟太高”或“攒齐 15 GB 再传太晚”，PyTorch DDP 按固定容量桶（Bucket，本例按单层 ~400 MB 展示）一满就发车，具体 6 轮细节见下方实验 2！'
+    },
+    {
+      svg:
+        '<text x="440" y="24" fill="#fbbf24" font-size="13.5" font-weight="800" text-anchor="middle">阶段 3：计算与通信双跑道并行（Overlap）—— 前 31 层通信被完美隐藏！</text>' +
+        '<text x="24" y="76" fill="#38bdf8" font-size="12" font-weight="800">计算跑道:</text>' +
+        '<rect x="96" y="54" width="128" height="34" rx="6" fill="rgba(56,189,248,0.25)" stroke="#38bdf8"/>' +
+        '<text x="160" y="76" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">算 L32 反向</text>' +
+        '<rect x="230" y="54" width="128" height="34" rx="6" fill="rgba(56,189,248,0.25)" stroke="#38bdf8"/>' +
+        '<text x="294" y="76" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">算 L31 反向</text>' +
+        '<rect x="364" y="54" width="128" height="34" rx="6" fill="rgba(56,189,248,0.25)" stroke="#38bdf8"/>' +
+        '<text x="428" y="76" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">算 L30 反向</text>' +
+        '<text x="530" y="76" fill="#94a3b8" font-size="16" font-weight="800" text-anchor="middle">……</text>' +
+        '<rect x="568" y="54" width="128" height="34" rx="6" fill="rgba(56,189,248,0.25)" stroke="#38bdf8"/>' +
+        '<text x="632" y="76" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">算 L1 反向</text>' +
+        '<rect x="752" y="54" width="104" height="34" rx="6" fill="rgba(167,139,250,0.3)" stroke="#a78bfa"/>' +
+        '<text x="804" y="76" fill="#fff" font-size="11.5" font-weight="700" text-anchor="middle">AdamW更新</text>' +
+
+        '<text x="24" y="130" fill="#34d399" font-size="12" font-weight="800">通信跑道:</text>' +
+        '<rect x="230" y="108" width="46" height="34" rx="6" fill="rgba(52,211,153,0.28)" stroke="#34d399"/>' +
+        '<text x="253" y="129" fill="#d1fae5" font-size="10" font-weight="700" text-anchor="middle">传L32</text>' +
+        '<rect x="364" y="108" width="46" height="34" rx="6" fill="rgba(52,211,153,0.28)" stroke="#34d399"/>' +
+        '<text x="387" y="129" fill="#d1fae5" font-size="10" font-weight="700" text-anchor="middle">传L31</text>' +
+        '<rect x="498" y="108" width="46" height="34" rx="6" fill="rgba(52,211,153,0.28)" stroke="#34d399"/>' +
+        '<text x="521" y="129" fill="#d1fae5" font-size="10" font-weight="700" text-anchor="middle">传L30</text>' +
+        '<rect x="700" y="108" width="46" height="34" rx="6" fill="rgba(251,191,36,0.32)" stroke="#fbbf24" stroke-width="1.8"/>' +
+        '<text x="723" y="129" fill="#fef3c7" font-size="10" font-weight="800" text-anchor="middle">传L1!</text>' +
+
+        '<rect x="230" y="156" width="466" height="28" rx="7" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.35)"/>' +
+        '<text x="463" y="174" fill="#34d399" font-size="11.5" font-weight="700" text-anchor="middle">▲ 前 31 层的通信全部被“藏”在下一层反向计算时间里（0 额外等待）</text>' +
+        '<text x="723" y="174" fill="#fbbf24" font-size="11" font-weight="700" text-anchor="middle">仅暴露 1.5ms 尾端!</text>',
+      note: '<strong>阶段 3（双流重叠）：</strong>全模型 32 层约 15 GB 梯度，Ring 总通信时长在 NVLink 上约 56 ms，但因为与反向计算双跑道重叠，真正让 GPU 空等出来的只剩最后 L1 那 <strong>1.5 ms 小尾巴</strong>！下方实验 3 可以亲自拉动带宽看它什么时候会被撑爆。'
+    },
+    {
+      svg:
+        '<text x="440" y="24" fill="#a78bfa" font-size="13.5" font-weight="800" text-anchor="middle">阶段 4：同步更新权重 —— 4 张卡的新模型权重依然 100% 逐比特一致！</text>' +
+        '<rect x="250" y="42" width="380" height="36" rx="9" fill="rgba(52,211,153,0.18)" stroke="#34d399" stroke-width="1.8"/>' +
+        '<text x="440" y="65" fill="#d1fae5" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">全套 8.03B 平均梯度 g_avg 在 4 张卡上完全相同 ✓</text>' +
+        '<g transform="translate(36, 98)">' +
+          '<rect x="0" y="0" width="184" height="82" rx="10" fill="rgba(167,139,250,0.16)" stroke="#a78bfa" stroke-width="1.8"/>' +
+          '<text x="92" y="26" fill="#38bdf8" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">rank 0</text>' +
+          '<text x="92" y="48" fill="#fff" font-size="11.5" font-family="monospace" text-anchor="middle">W_new = AdamW(W, g_avg)</text>' +
+          '<text x="92" y="69" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">权重指纹: #A9F3 ✓</text>' +
+        '</g>' +
+        '<g transform="translate(244, 98)">' +
+          '<rect x="0" y="0" width="184" height="82" rx="10" fill="rgba(167,139,250,0.16)" stroke="#a78bfa" stroke-width="1.8"/>' +
+          '<text x="92" y="26" fill="#34d399" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">rank 1</text>' +
+          '<text x="92" y="48" fill="#fff" font-size="11.5" font-family="monospace" text-anchor="middle">W_new = AdamW(W, g_avg)</text>' +
+          '<text x="92" y="69" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">权重指纹: #A9F3 ✓</text>' +
+        '</g>' +
+        '<g transform="translate(452, 98)">' +
+          '<rect x="0" y="0" width="184" height="82" rx="10" fill="rgba(167,139,250,0.16)" stroke="#a78bfa" stroke-width="1.8"/>' +
+          '<text x="92" y="26" fill="#a78bfa" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">rank 2</text>' +
+          '<text x="92" y="48" fill="#fff" font-size="11.5" font-family="monospace" text-anchor="middle">W_new = AdamW(W, g_avg)</text>' +
+          '<text x="92" y="69" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">权重指纹: #A9F3 ✓</text>' +
+        '</g>' +
+        '<g transform="translate(660, 98)">' +
+          '<rect x="0" y="0" width="184" height="82" rx="10" fill="rgba(167,139,250,0.16)" stroke="#a78bfa" stroke-width="1.8"/>' +
+          '<text x="92" y="26" fill="#fbbf24" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">rank 3</text>' +
+          '<text x="92" y="48" fill="#fff" font-size="11.5" font-family="monospace" text-anchor="middle">W_new = AdamW(W, g_avg)</text>' +
+          '<text x="92" y="69" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">权重指纹: #A9F3 ✓</text>' +
+        '</g>',
+      note: '<strong>阶段 4（同步更新权重）：</strong>因为起始权重 <code>W</code> 相同，同步后的平均梯度 <code>g_avg</code> 也完全相同，4 张卡各自本地跑完 <code>AdamW.step()</code> 后，得到的新权重 <code>W_new</code> 依然 100% 一致，立刻进入下一轮 <code>Step t+1</code>！（相当于单卡用 4 倍大的 Batch 完美训练了一步！）'
+    }
+  ];
+
+  function initStory() {
+    function render(idx) {
+      var s = STORIES[idx];
+      renderSvgInto('storySvgWrap', '0 0 880 198', 680, s.svg);
+      document.getElementById('storyExplain').innerHTML = s.note;
+    }
+    var tabs = document.getElementById('storyTabs');
+    tabs.addEventListener('click', function(e) {
+      var btn = e.target.closest('button[data-st]');
+      if (!btn) return;
+      var all = tabs.querySelectorAll('button');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      btn.classList.add('active');
+      render(parseInt(btn.getAttribute('data-st'), 10));
+    });
+    render(0);
+  }
+
+  /* =========================================================
+     MODULE 2: 400 MB BUCKET 6-ROUND RING SIMULATOR
+     ========================================================= */
+  var LINK_SPECS = {
+    nvlink: { name: 'H100 NVLink (400 GB/s)', bw: 400, roundMs: 0.25 },
+    ib:     { name: '跨机 IB 400G (50 GB/s)', bw: 50,  roundMs: 2.00 },
+    pcie:   { name: '普通 PCIe 4.0 (25 GB/s)', bw: 25, roundMs: 4.00 }
+  };
+
+  function buildBucketStates() {
+    var N = 4;
+    var labels = ['a', 'b', 'c', 'd'];
+    // Track which ranks are summed into each chunk: bitmask or array of rank indices
+    function initRanks() {
+      var res = [];
+      for (var r = 0; r < N; r++) {
+        var row = [];
+        for (var c = 0; c < N; c++) row.push([r]);
+        res.push(row);
+      }
+      return res;
+    }
+    function cloneGrid(g) {
+      return g.map(function(row) { return row.map(function(cell) { return cell.slice(); }); });
+    }
+    function emptyBool() {
+      return [
+        [false,false,false,false],[false,false,false,false],
+        [false,false,false,false],[false,false,false,false]
+      ];
+    }
+
+    var states = [];
+    states.push({ step: 0, phase: 'init', grid: initRanks(), upd: emptyBool(), arrows: [] });
+
+    // ReduceScatter: 3 rounds (k = 0..2)
+    for (var k = 0; k < N - 1; k++) {
+      var prev = states[states.length - 1].grid;
+      var next = cloneGrid(prev);
+      var upd = emptyBool();
+      var arrows = [];
+      for (var g = 0; g < N; g++) {
+        var cIdx = (g - k + N) % N;
+        var dst = (g + 1) % N;
+        var sentList = prev[g][cIdx].slice();
+        next[dst][cIdx] = prev[dst][cIdx].concat(sentList);
+        upd[dst][cIdx] = true;
+        arrows.push({ from: g, to: dst, cIdx: cIdx, lbl: labels[cIdx], count: sentList.length });
+      }
+      states.push({ step: k + 1, phase: 'rs', grid: next, upd: upd, arrows: arrows });
+    }
+
+    // AllGather: 3 rounds (m = 0..2)
+    for (var m = 0; m < N - 1; m++) {
+      var prev2 = states[states.length - 1].grid;
+      var next2 = cloneGrid(prev2);
+      var upd2 = emptyBool();
+      var arrows2 = [];
+      for (var g2 = 0; g2 < N; g2++) {
+        var cIdx2 = (g2 + 1 - m + N) % N;
+        var dst2 = (g2 + 1) % N;
+        next2[dst2][cIdx2] = [0, 1, 2, 3];
+        upd2[dst2][cIdx2] = true;
+        arrows2.push({ from: g2, to: dst2, cIdx: cIdx2, lbl: labels[cIdx2].toUpperCase(), count: 4 });
+      }
+      states.push({ step: N + m, phase: 'ag', grid: next2, upd: upd2, arrows: arrows2 });
+    }
+
+    // Final Step 7: Divide by 4 (Avg)
+    states.push({
+      step: 7, phase: 'avg',
+      grid: cloneGrid(states[states.length - 1].grid),
+      upd: emptyBool(), arrows: []
+    });
+    return states;
+  }
+
+  function initBucketSim() {
+    var states = buildBucketStates();
+    var step = 0;
+    var linkKey = 'nvlink';
+    var timer = null;
+    var chunkNames = ['a', 'b', 'c', 'd'];
+    var gpuCols = ['#38bdf8', '#34d399', '#a78bfa', '#fbbf24'];
+    var gpuCorpus = ['新闻', '代码', '论文', '百科'];
+
+    function stopTimer() {
+      if (timer) { clearInterval(timer); timer = null; }
+      document.getElementById('btnBPlay').textContent = '▶ 自动播放';
+    }
+
+    function fmtCellLabel(cIdx, list, isAvg) {
+      var ch = chunkNames[cIdx];
+      if (isAvg) return ch.toUpperCase() + '/4';
+      if (list.length === 4) return ch.toUpperCase() + ' (全4卡)';
+      var parts = [];
+      for (var i = 0; i < list.length; i++) parts.push(ch + list[i]);
+      return parts.join('+');
+    }
+
+    function render() {
+      var st = states[step];
+      var spec = LINK_SPECS[linkKey];
+      var rMs = spec.roundMs;
+
+      // Update timeline timestamps & active highlight
+      var pills = document.getElementById('bucketTimeline').querySelectorAll('.bt-item');
+      for (var i = 0; i < pills.length; i++) {
+        pills[i].classList.toggle('active', i === step);
+        var elapsed = i <= 6 ? (i * rMs) : (6 * rMs);
+        var tmEl = document.getElementById('btm' + i);
+        if (tmEl) tmEl.textContent = elapsed.toFixed(2) + 'ms';
+      }
+      document.getElementById('btnBPrev').disabled = step === 0;
+      document.getElementById('btnBNext').disabled = step === states.length - 1;
+
+      // 1. Render Ring SVG
+      var coords = [
+        { x: 105, y: 74 }, { x: 325, y: 74 },
+        { x: 325, y: 234 }, { x: 105, y: 234 }
+      ];
+      var edges = [
+        { x: 215, y: 48,  x1: 158, y1: 74,  x2: 272, y2: 74 },
+        { x: 376, y: 154, x1: 325, y1: 112, x2: 325, y2: 196 },
+        { x: 215, y: 268, x1: 272, y1: 234, x2: 158, y2: 234 },
+        { x: 52,  y: 154, x1: 105, y1: 196, x2: 105, y2: 112 }
+      ];
+
+      var curTimeMs = (step <= 6 ? step * rMs : 6 * rMs).toFixed(2);
+      var sentSoFarMB = (step <= 6 ? step * 100 : 600);
+      var phaseTitle = step === 0 ? '400MB 桶切分' : (st.phase === 'rs' ? 'ReduceScatter ' + step + '/3' : (st.phase === 'ag' ? 'AllGather ' + (step - 3) + '/3' : '÷4 求平均完成!'));
+      var phaseCol = st.phase === 'rs' ? '#38bdf8' : (st.phase === 'ag' ? '#34d399' : (st.phase === 'avg' ? '#a78bfa' : '#94a3b8'));
+
+      var svgInner =
+        '<defs>' +
+          '<marker id="bArrC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8"/></marker>' +
+          '<marker id="bArrG" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399"/></marker>' +
+          '<marker id="bArrD" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 1 L 10 5 L 0 9 z" fill="#475569"/></marker>' +
+        '</defs>' +
+        '<rect x="136" y="122" width="158" height="66" rx="10" fill="rgba(15,23,42,0.94)" stroke="' + phaseCol + '" stroke-width="1.6"/>' +
+        '<text x="215" y="143" fill="#fff" font-size="11.5" font-weight="800" text-anchor="middle">' + phaseTitle + '</text>' +
+        '<text x="215" y="161" fill="' + phaseCol + '" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">已耗时: ' + curTimeMs + ' ms</text>' +
+        '<text x="215" y="178" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="middle">每卡累计发: ' + sentSoFarMB + ' MB</text>';
+
+      for (var ei = 0; ei < 4; ei++) {
+        var em = edges[ei];
+        var arr = st.arrows.length > 0 ? st.arrows[ei] : null;
+        var col = !arr ? '#334155' : (st.phase === 'rs' ? '#38bdf8' : '#34d399');
+        var mk = !arr ? 'url(#bArrD)' : (st.phase === 'rs' ? 'url(#bArrC)' : 'url(#bArrG)');
+        svgInner += '<line x1="' + em.x1 + '" y1="' + em.y1 + '" x2="' + em.x2 + '" y2="' + em.y2 + '" stroke="' + col + '" stroke-width="' + (arr ? '3' : '1.6') + '" marker-end="' + mk + '"/>';
+        if (arr) {
+          var pkt = arr.lbl + ' · 100MB';
+          svgInner +=
+            '<rect x="' + (em.x - 42) + '" y="' + (em.y - 11) + '" width="84" height="22" rx="11" fill="#080c16" stroke="' + col + '" stroke-width="1.3"/>' +
+            '<text x="' + em.x + '" y="' + (em.y + 3.5) + '" fill="#fff" font-size="10" font-family="monospace" font-weight="700" text-anchor="middle">' + pkt + '</text>';
+        }
+      }
+
+      for (var g = 0; g < 4; g++) {
+        var pt = coords[g];
+        svgInner +=
+          '<rect x="' + (pt.x - 50) + '" y="' + (pt.y - 34) + '" width="100" height="68" rx="12" fill="rgba(19,28,49,0.96)" stroke="' + gpuCols[g] + '" stroke-width="2.1"/>' +
+          '<text x="' + pt.x + '" y="' + (pt.y - 6) + '" fill="' + gpuCols[g] + '" font-size="13" font-family="monospace" font-weight="800" text-anchor="middle">rank ' + g + '</text>' +
+          '<text x="' + pt.x + '" y="' + (pt.y + 14) + '" fill="#cbd5e1" font-size="10" text-anchor="middle">' + gpuCorpus[g] + ' · 400MB</text>';
+      }
+      renderSvgInto('bucketRingSvgWrap', '0 0 430 306', 340, svgInner);
+
+      // 2. Render 4 GPU Trays
+      var traysHtml = '';
+      for (var r = 0; r < 4; r++) {
+        var chHtml = '';
+        for (var c = 0; c < 4; c++) {
+          var list = st.grid[r][c];
+          var isFull = list.length === 4;
+          var isUpd = st.upd[r][c];
+          var cls = 't-chunk' + (st.phase === 'avg' ? ' avg' : (isFull ? ' full' : '')) + (isUpd ? ' upd' : '');
+          var sub = st.phase === 'avg' ? '100MB 平均✓' : (isFull ? (isUpd ? '100MB 集齐!' : '100MB 完整✓') : (isUpd ? '+100MB累加' : '100MB'));
+          chHtml += '<div class="' + cls + '">' + fmtCellLabel(c, list, st.phase === 'avg') + '<span class="tc-sub">' + sub + '</span></div>';
+        }
+        traysHtml +=
+          '<div class="gpu-tray">' +
+            '<div class="tray-head">' +
+              '<span style="color:' + gpuCols[r] + ';">rank ' + r + ' · Layer 32 梯度桶（4 × 100 MB）</span>' +
+              '<span class="tag ' + (st.phase === 'avg' ? 'tag-violet' : 'tag-cyan') + '">' + (st.phase === 'avg' ? '400MB 已对齐 ✓' : '400 MB') + '</span>' +
+            '</div>' +
+            '<div class="tray-chunks">' + chHtml + '</div>' +
+          '</div>';
+      }
+      document.getElementById('bucketGpuTrays').innerHTML = traysHtml;
+
+      // 3. Step narration
+      var narr = [
+        '<strong>第 0 步（0.00 ms）：</strong>第 32 层反向刚结束！4 张卡各自手握 400 MB 局部梯度，切分为 4 块 <code>[a, b, c, d]</code>，<strong>每块精确 100 MB</strong>。',
+        '<strong>ReduceScatter 第 1 轮（耗时 ' + rMs.toFixed(2) + ' ms）：</strong>4 条链路同时开跑！每张卡发出 <strong>100 MB</strong> 给顺时针下家，下家立刻逐元素相加（例如 <code>rank 1</code> 拿到 <code>a0+a1</code>）。',
+        '<strong>ReduceScatter 第 2 轮（累计 ' + (2*rMs).toFixed(2) + ' ms）：</strong>把刚累加完的 100 MB 半成品继续顺时针传给下一位再加，已有分片集齐 3 张卡之和！',
+        '<strong>ReduceScatter 第 3 轮结束（累计 ' + (3*rMs).toFixed(2) + ' ms）：</strong>每张卡恰好诞生 <strong>1 块 100 MB 集齐 4 卡总和的完全体梯度</strong>（<code>A, B, C, D</code> 分落四卡）！',
+        '<strong>AllGather 第 4 轮（累计 ' + (4*rMs).toFixed(2) + ' ms）：</strong>停止做加法！每人把那块 100 MB 完全体顺时针发给下家直接覆盖。',
+        '<strong>AllGather 第 5 轮（累计 ' + (5*rMs).toFixed(2) + ' ms）：</strong>继续顺时针扩散 100 MB 完整块，每张卡已握有 300 MB 完整总和梯度。',
+        '<strong>AllGather 第 6 轮结束（累计 ' + (6*rMs).toFixed(2) + ' ms）：</strong>全部 4 张卡都拿到了完全相同的 400 MB 总和梯度 <code>[A, B, C, D]</code>！每卡全程共发 <code>6 × 100 MB = 600 MB</code>。',
+        '<strong>✅ 除以 4 求平均（耗时忽略不计）：</strong>每张卡在片上顺手执行 <code>grad /= 4</code>，第 32 层的 400 MB 梯度同步彻底完成！'
+      ];
+      document.getElementById('bucketExplain').innerHTML = narr[step];
+
+      // 4. Ring vs Naive comparison cards
+      var ringTotalMs = 6 * rMs;
+      var naiveTotalMs = 24 * rMs; // rank 0 recvs 1200MB + sends 1200MB = 2400MB (4x slower!)
+      document.getElementById('bucketCmpGrid').innerHTML =
+        '<div class="cmp-box" style="border-color:rgba(52,211,153,0.4);">' +
+          '<div class="flex-between" style="font-size:13px;font-weight:700;">' +
+            '<span style="color:var(--emerald);">Ring AllReduce（当前 400 MB 桶）</span>' +
+            '<span style="font-family:var(--font-mono);color:#fff;">' + ringTotalMs.toFixed(2) + ' ms · 快 4.0×!</span>' +
+          '</div>' +
+          '<div style="font-size:11.5px;color:var(--text-muted);margin-top:3px;">每张卡仅发 <strong>600 MB</strong>（6 轮 × 100 MB），4 条链路 100% 并发满载</div>' +
+          '<div class="bar-track"><div class="bar-fill" style="width:25%;background:#34d399;"></div></div>' +
+        '</div>' +
+        '<div class="cmp-box" style="border-color:rgba(251,113,133,0.4);">' +
+          '<div class="flex-between" style="font-size:13px;font-weight:700;">' +
+            '<span style="color:var(--rose);">朴素中心化方案（全发给 rank 0）</span>' +
+            '<span style="font-family:var(--font-mono);color:#fda4af;">' + naiveTotalMs.toFixed(2) + ' ms</span>' +
+          '</div>' +
+          '<div style="font-size:11.5px;color:var(--text-muted);margin-top:3px;"><code>rank 0</code> 串行吞吐 <strong>2,400 MB</strong>（收 1200 + 发 1200），其他卡干等！</div>' +
+          '<div class="bar-track"><div class="bar-fill" style="width:100%;background:#fb7185;"></div></div>' +
+        '</div>';
+    }
+
+    document.getElementById('bucketLinkSel').addEventListener('change', function() {
+      linkKey = this.value; render();
+    });
+    document.getElementById('bucketTimeline').addEventListener('click', function(e) {
+      var item = e.target.closest('.bt-item[data-bs]');
+      if (!item) return;
+      stopTimer();
+      step = parseInt(item.getAttribute('data-bs'), 10);
+      render();
+    });
+    document.getElementById('btnBPrev').addEventListener('click', function() {
+      stopTimer(); if (step > 0) { step--; render(); }
+    });
+    document.getElementById('btnBNext').addEventListener('click', function() {
+      stopTimer(); if (step < states.length - 1) { step++; render(); }
+    });
+    document.getElementById('btnBReset').addEventListener('click', function() {
+      stopTimer(); step = 0; render();
+    });
+    document.getElementById('btnBPlay').addEventListener('click', function() {
+      if (timer) { stopTimer(); return; }
+      if (step >= states.length - 1) step = 0;
+      this.textContent = '⏸ 暂停';
+      render();
+      timer = setInterval(function() {
+        if (step >= states.length - 1) { stopTimer(); return; }
+        step++;
+        render();
+      }, 1050);
+    });
+    render();
+  }
+
+  /* =========================================================
+     MODULE 3: DUAL-STREAM OVERLAP GANTT CHART SIMULATOR
+     ========================================================= */
+  function initOverlapSim() {
+    var overlapOn = true;
+    var linkKey = 'nvlink';
+    var compMs = 6; // per layer backward compute ms
+
+    function render() {
+      var M = 32; // 32 layers of Llama 3 8B
+      var commMs = LINK_SPECS[linkKey].roundMs * 6; // 1.5ms / 12ms / 24ms per 400MB bucket
+
+      document.getElementById('ovCompVal').textContent = compMs.toFixed(1) + ' ms / 层（32 层共 ' + (M * compMs).toFixed(0) + ' ms）';
+
+      var totalComp = M * compMs;
+      var totalComm = M * commMs;
+      var totalSerial = totalComp + totalComm;
+      var totalOverlap = Math.max(M * compMs + commMs, compMs + M * commMs);
+      var actualTotal = overlapOn ? totalOverlap : totalSerial;
+      var exposedComm = actualTotal - totalComp;
+      var hiddenComm = totalComm - exposedComm;
+      var hiddenPct = (hiddenComm / totalComm) * 100;
+
+      // Visualize first 6 layers (L32..L27) in crisp Gantt detail so user sees exact alignment & queueing!
+      var showLayers = 6;
+      var compBlocks = [];
+      var commBlocks = [];
+      var prevCommEnd = 0;
+
+      for (var i = 0; i < showLayers; i++) {
+        var cStart = i * compMs;
+        var cEnd = cStart + compMs;
+        compBlocks.push({ lbl: 'L' + (32 - i), s: cStart, e: cEnd });
+
+        var mStart, mEnd;
+        if (overlapOn) {
+          mStart = Math.max(cEnd, prevCommEnd);
+          mEnd = mStart + commMs;
+          prevCommEnd = mEnd;
+        } else {
+          mStart = showLayers * compMs + i * commMs;
+          mEnd = mStart + commMs;
+        }
+        commBlocks.push({ lbl: '传L' + (32 - i), s: mStart, e: mEnd });
+      }
+
+      var maxT = Math.max(compBlocks[showLayers - 1].e, commBlocks[showLayers - 1].e);
+      var chartLeft = 104, chartW = 730;
+      var scale = chartW / maxT;
+
+      var svg =
+        '<text x="440" y="22" fill="#e2e8f0" font-size="13" font-weight="800" text-anchor="middle">' +
+          '前 6 层（L32 → L27）实时双跑道甘特图（单层计算 ' + compMs + 'ms vs 单桶通信 ' + commMs.toFixed(1) + 'ms）' +
+        '</text>' +
+        '<text x="16" y="68" fill="#38bdf8" font-size="12" font-weight="800">计算跑道</text>' +
+        '<text x="16" y="83" fill="#64748b" font-size="10">Tensor Core</text>' +
+        '<text x="16" y="132" fill="#34d399" font-size="12" font-weight="800">通信跑道</text>' +
+        '<text x="16" y="147" fill="#64748b" font-size="10">NCCL Ring</text>' +
+        '<line x1="' + chartLeft + '" y1="176" x2="' + (chartLeft + chartW) + '" y2="176" stroke="rgba(148,163,184,0.3)" stroke-width="1"/>';
+
+      // Draw compute bars
+      for (var j = 0; j < compBlocks.length; j++) {
+        var cb = compBlocks[j];
+        var x = chartLeft + cb.s * scale;
+        var w = Math.max(2, (cb.e - cb.s) * scale - 2);
+        svg +=
+          '<rect x="' + x.toFixed(1) + '" y="48" width="' + w.toFixed(1) + '" height="40" rx="6" fill="rgba(56,189,248,0.26)" stroke="#38bdf8" stroke-width="1.5"/>' +
+          (w > 26 ? '<text x="' + (x + w/2).toFixed(1) + '" y="73" fill="#fff" font-size="11" font-family="monospace" font-weight="700" text-anchor="middle">' + cb.lbl + '</text>' : '');
+      }
+
+      // Draw comm bars
+      var isCommBound = overlapOn && commMs > compMs;
+      for (var k = 0; k < commBlocks.length; k++) {
+        var mb = commBlocks[k];
+        var mx = chartLeft + mb.s * scale;
+        var mw = Math.max(2, (mb.e - mb.s) * scale - 2);
+        var isSpill = mb.e > compBlocks[showLayers - 1].e;
+        var fillC = !overlapOn ? 'rgba(251,113,133,0.28)' : (isSpill ? 'rgba(251,191,36,0.32)' : 'rgba(52,211,153,0.28)');
+        var strkC = !overlapOn ? '#fb7185' : (isSpill ? '#fbbf24' : '#34d399');
+        svg +=
+          '<rect x="' + mx.toFixed(1) + '" y="112" width="' + mw.toFixed(1) + '" height="40" rx="6" fill="' + fillC + '" stroke="' + strkC + '" stroke-width="1.5"/>' +
+          (mw > 30 ? '<text x="' + (mx + mw/2).toFixed(1) + '" y="137" fill="#fff" font-size="10.5" font-family="monospace" font-weight="700" text-anchor="middle">' + mb.lbl + '</text>' : '');
+      }
+
+      // Time axis ticks
+      for (var t = 0; t <= 4; t++) {
+        var tv = (maxT * t / 4);
+        var tx = chartLeft + tv * scale;
+        svg += '<text x="' + tx.toFixed(1) + '" y="194" fill="#94a3b8" font-size="10.5" font-family="monospace" text-anchor="middle">' + tv.toFixed(1) + 'ms</text>';
+      }
+
+      renderSvgInto('ganttSvgWrap', '0 0 865 206', 660, svg);
+
+      // Render 3 KPIs for full 32 layers
+      document.getElementById('overlapKpis').innerHTML =
+        '<div class="kpi-box">' +
+          '<div class="kl">全 32 层总耗时（反向 + 通信）</div>' +
+          '<div class="kv" style="color:' + (overlapOn ? 'var(--cyan)' : 'var(--rose)') + ';">' + actualTotal.toFixed(1) + ' ms</div>' +
+          '<div class="ks">纯计算 ' + totalComp.toFixed(0) + 'ms ｜ 累加纯通信 ' + totalComm.toFixed(0) + 'ms</div>' +
+        '</div>' +
+        '<div class="kpi-box">' +
+          '<div class="kl">额外暴露的“纯通信等待”</div>' +
+          '<div class="kv" style="color:' + (exposedComm <= commMs * 1.1 ? 'var(--emerald)' : 'var(--amber)') + ';">' + exposedComm.toFixed(1) + ' ms</div>' +
+          '<div class="ks">' + (overlapOn ? (isCommBound ? '⚠️ 带宽瓶颈！通信排队溢出' : '✓ 仅剩 L1 最后 1 桶尾端！') : '✗ 全部通信白白干等！') + '</div>' +
+        '</div>' +
+        '<div class="kpi-box">' +
+          '<div class="kl">被计算成功隐藏的通信比例</div>' +
+          '<div class="kv" style="color:var(--violet);">' + hiddenPct.toFixed(1) + '%</div>' +
+          '<div class="ks">省下 ' + hiddenComm.toFixed(1) + ' ms 宝贵 GPU 时间</div>' +
+        '</div>';
+
+      // Contextual insight
+      var noteEl = document.getElementById('overlapNote');
+      if (!overlapOn) {
+        noteEl.innerHTML = '<strong>关闭重叠（串行傻等）：</strong>必须先干完 32 层反向（<code>' + totalComp.toFixed(0) + 'ms</code>），再串行传输全部 32 桶梯度（<code>' + totalComm.toFixed(0) + 'ms</code>），通信隐藏率 <strong>0%</strong>，大量 GPU 算力空转！';
+      } else if (!isCommBound) {
+        noteEl.innerHTML = '<strong>✅ 完美计算密集区（Compute-Bound）：</strong>因为单桶通信（<code>' + commMs.toFixed(1) + 'ms</code>）≤ 单层反向计算（<code>' + compMs.toFixed(1) + 'ms</code>），<strong>前 31 层通信被 100% 隐藏在下一层计算背后</strong>，隐藏率高达 <strong>' + hiddenPct.toFixed(1) + '%</strong>！试试把互联切到 PCIe 4.0 或跨机 IB 看看会发生什么！';
+      } else {
+        noteEl.innerHTML = '<strong>⚠️ 进入通信瓶颈区（Comm-Bound）：</strong>单桶通信（<code>' + commMs.toFixed(1) + 'ms</code>）已大于单层计算（<code>' + compMs.toFixed(1) + 'ms</code>），绿色通信块来不及传完就开始向右侧排队积压（变黄溢出）！<strong>工程解法：</strong>增大 Micro-Batch 或用梯度累积把单层计算时间拉长（向右拖动上面滑块试试），就能把通信重新藏回去！';
+      }
+    }
+
+    document.getElementById('overlapModeTabs').addEventListener('click', function(e) {
+      var btn = e.target.closest('button[data-om]');
+      if (!btn) return;
+      var all = this.querySelectorAll('button');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      btn.classList.add('active');
+      overlapOn = btn.getAttribute('data-om') === 'on';
+      render();
+    });
+    document.getElementById('ovLinkSel').addEventListener('change', function() { linkKey = this.value; render(); });
+    document.getElementById('ovCompSlider').addEventListener('input', function() { compMs = parseFloat(this.value); render(); });
+    render();
+  }
+
+  /* =========================================================
+     MODULE 4: DDP VS FSDP (ZERO-3) MEMORY & RING SPLIT
+     ========================================================= */
+  function initFsdpView() {
+    function render(mode) {
+      var svg = '';
+      if (mode === 'ddp') {
+        svg =
+          '<text x="440" y="24" fill="#fb7185" font-size="13.5" font-weight="800" text-anchor="middle">经典 DDP：跑完完整 Ring（6 轮），4 张卡各自重复囤满 100% 训练状态！</text>';
+        for (var g = 0; g < 4; g++) {
+          var gx = 32 + g * 212;
+          svg +=
+            '<rect x="' + gx + '" y="46" width="184" height="170" rx="11" fill="rgba(251,113,133,0.08)" stroke="#fb7185" stroke-width="1.8"/>' +
+            '<text x="' + (gx+92) + '" y="68" fill="#fff" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">rank ' + g + ' (需 128 GB 🔥)</text>' +
+            '<rect x="' + (gx+16) + '" y="80" width="152" height="26" rx="5" fill="rgba(56,189,248,0.28)" stroke="#38bdf8"/>' +
+            '<text x="' + (gx+92) + '" y="97" fill="#fff" font-size="10.5" text-anchor="middle">100% 权重 BF16 (16GB)</text>' +
+            '<rect x="' + (gx+16) + '" y="112" width="152" height="26" rx="5" fill="rgba(52,211,153,0.28)" stroke="#34d399"/>' +
+            '<text x="' + (gx+92) + '" y="129" fill="#fff" font-size="10.5" text-anchor="middle">100% 梯度 BF16 (16GB)</text>' +
+            '<rect x="' + (gx+16) + '" y="144" width="152" height="58" rx="5" fill="rgba(251,191,36,0.26)" stroke="#fbbf24"/>' +
+            '<text x="' + (gx+92) + '" y="168" fill="#fef3c7" font-size="10.5" font-weight="700" text-anchor="middle">100% AdamW 优化器</text>' +
+            '<text x="' + (gx+92) + '" y="187" fill="#fde68a" font-size="10" font-family="monospace" text-anchor="middle">FP32 主权重+m+v (96GB!)</text>';
+        }
+        svg += '<text x="440" y="238" fill="#fb7185" font-size="12" font-weight="700" text-anchor="middle">⚠️ 128 GB > 80 GB H100 单卡显存上限 → 直接 OOM（还不算激活值显存！）</text>';
+
+        document.getElementById('fsdpNote').className = 'callout-amber';
+        document.getElementById('fsdpNote').innerHTML = '<strong>DDP 的显存冗余痛点：</strong>4 张卡存了 <strong>4 份一模一样</strong>的 128 GB 权重、梯度和优化器状态！仅仅为了训一个 8B 模型，单张 80GB H100 就已经 OOM，更别提 70B 或 671B！点击切换到 <strong>FSDP / ZeRO-3</strong> 看如何破解！';
+      } else {
+        svg =
+          '<text x="440" y="24" fill="#34d399" font-size="13.5" font-weight="800" text-anchor="middle">现代 FSDP / ZeRO-3：把 Ring AllReduce 拦腰劈开 → 每张卡只存 1/4（32 GB）！</text>';
+        var shardLbls = ['分片 a (1/4)', '分片 b (1/4)', '分片 c (1/4)', '分片 d (1/4)'];
+        for (var r = 0; r < 4; r++) {
+          var rx = 32 + r * 212;
+          svg +=
+            '<rect x="' + rx + '" y="46" width="184" height="170" rx="11" fill="rgba(52,211,153,0.09)" stroke="#34d399" stroke-width="1.8"/>' +
+            '<text x="' + (rx+92) + '" y="68" fill="#34d399" font-size="12.5" font-family="monospace" font-weight="800" text-anchor="middle">rank ' + r + ' (仅 32 GB ✓)</text>' +
+            '<rect x="' + (rx+16) + '" y="82" width="152" height="24" rx="5" fill="rgba(56,189,248,0.22)" stroke="#38bdf8"/>' +
+            '<text x="' + (rx+92) + '" y="98" fill="#e0f2fe" font-size="10.5" text-anchor="middle">' + shardLbls[r] + ' 权重 (4GB)</text>' +
+            '<rect x="' + (rx+16) + '" y="112" width="152" height="24" rx="5" fill="rgba(52,211,153,0.22)" stroke="#34d399"/>' +
+            '<text x="' + (rx+92) + '" y="128" fill="#d1fae5" font-size="10.5" text-anchor="middle">' + shardLbls[r] + ' 梯度 (4GB)</text>' +
+            '<rect x="' + (rx+16) + '" y="142" width="152" height="30" rx="5" fill="rgba(251,191,36,0.22)" stroke="#fbbf24"/>' +
+            '<text x="' + (rx+92) + '" y="161" fill="#fef3c7" font-size="10.5" text-anchor="middle">' + shardLbls[r] + ' 优化器 (24GB)</text>' +
+            '<text x="' + (rx+92) + '" y="198" fill="#34d399" font-size="10.5" font-weight="700" text-anchor="middle">省下 48 GB 装激活与长文本!</text>';
+        }
+        svg += '<text x="440" y="238" fill="#a7f3d0" font-size="12" font-weight="700" text-anchor="middle">拆分奥义：反向算完 L32 只跑前 3 轮【ReduceScatter】即停；下轮前向到 L32 前再跑后 3 轮【AllGather】临时拼权重！</text>';
+
+        document.getElementById('fsdpNote').className = 'callout-emerald';
+        document.getElementById('fsdpNote').innerHTML = '<strong>FSDP / ZeRO-3 为什么是千卡大模型的救世主？</strong>把我们在实验 2 里跑的 6 轮 Ring AllReduce 拦腰拆成两半：反向时只跑 <strong>前 3 轮 ReduceScatter</strong>（每张卡只保留属于自己的 100 MB 完整梯度去更新自己的 1/4 参数）；等到下一轮前向算到第 32 层前，再跑 <strong>后 3 轮 AllGather</strong> 临时拼回完整 400 MB 权重，算完该层立刻释放！<strong>显存直降 N 倍，80GB H100 轻松驾驭！</strong>';
+      }
+      renderSvgInto('fsdpSvgWrap', '0 0 880 252', 680, svg);
+    }
+
+    var tabs = document.getElementById('fsdpTabs');
+    tabs.addEventListener('click', function(e) {
+      var btn = e.target.closest('button[data-ft]');
+      if (!btn) return;
+      var all = tabs.querySelectorAll('button');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      btn.classList.add('active');
+      render(btn.getAttribute('data-ft'));
+    });
+    render('fsdp');
+  }
+
+  /* =========================================================
+     HARDENED SAFE BOOT
+     ========================================================= */
+  function safeBoot() {
+    var mods = [
+      { name: '四阶段导览', fn: initStory },
+      { name: '400MB桶实录', fn: initBucketSim },
+      { name: '双流重叠甘特图', fn: initOverlapSim },
+      { name: 'DDP vs FSDP', fn: initFsdpView }
+    ];
+    var ok = 0;
+    for (var i = 0; i < mods.length; i++) {
+      try { mods[i].fn(); ok++; }
+      catch (err) { if (window.console && console.error) console.error('[模块异常]', mods[i].name, err); }
+    }
+    var st = document.getElementById('bootStatus');
+    if (st) {
+      if (ok === mods.length) {
+        st.textContent = '● ' + ok + '/' + mods.length + ' 交互模块就绪';
+        st.className = 'status-pill ok';
+      } else {
+        st.textContent = '⚠ 部分异常 (' + ok + '/' + mods.length + ')';
+      }
+    }
+  }
+
+  function scheduleBoot() {
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(safeBoot);
+    else setTimeout(safeBoot, 0);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scheduleBoot);
+  else scheduleBoot();
+})();
+</script>
+</body>
+</html>

@@ -1,11 +1,15 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-26T15:11:45Z",
-  "totalCount": 5,
+  "generatedAt": "2026-11-28T15:04:46Z",
+  "totalCount": 6,
   "categories": [
     {
       "name": "核心架构",
       "count": 4
+    },
+    {
+      "name": "训练与微调",
+      "count": 1
     },
     {
       "name": "AI 工程与评测",
@@ -15,7 +19,7 @@
   "tags": [
     {
       "name": "大模型",
-      "count": 4
+      "count": 5
     },
     {
       "name": "KV Cache",
@@ -24,6 +28,10 @@
     {
       "name": "MoE",
       "count": 3
+    },
+    {
+      "name": "FSDP",
+      "count": 2
     },
     {
       "name": "GQA",
@@ -35,6 +43,10 @@
     },
     {
       "name": "MLA",
+      "count": 2
+    },
+    {
+      "name": "PyTorch",
       "count": 2
     },
     {
@@ -54,15 +66,7 @@
       "count": 1
     },
     {
-      "name": "FSDP",
-      "count": 1
-    },
-    {
       "name": "FlashAttention",
-      "count": 1
-    },
-    {
-      "name": "PyTorch",
       "count": 1
     },
     {
@@ -75,6 +79,34 @@
     }
   ],
   "articles": [
+    {
+      "id": "llm_training_transfer_demo",
+      "slug": "llm_training_transfer_demo",
+      "filename": "llm_training_transfer_demo.html",
+      "path": "articles/llm_training_transfer_demo.html",
+      "title": "实拍一次大模型训练的数据传输：Llama 3 8B 四卡 Ring AllReduce 与重叠流水线",
+      "category": "训练与微调",
+      "tags": [
+        "大模型",
+        "FSDP",
+        "PyTorch"
+      ],
+      "summary": "把抽象的 Ring AllReduce 放进真实工程现场——跟拍 Llama 3 8B（32 层 / BF16）在 4 张 GPU（rank 0 ~ 3）上跑完 1 个训练 Step：前向 0 通信、反向每层 400 MB 梯度分桶、6 轮 100 MB 环形搬运、计算与通信双跑道重叠，以及 FSDP 如何拦腰劈开省下…",
+      "headings": [
+        "实拍一次大模型训练的数据传输：15 GB 梯度如何在 4 张 GPU 间毫秒级流转？",
+        "全景导览：一次训练迭代（Step t）的 4 个真实阶段",
+        "放大镜实拍：第 32 层「400 MB 梯度桶」的毫秒级搬运",
+        "工程绝招：计算引擎 vs. 通信引擎「双跑道重叠」甘特图",
+        "从 8B 迈向百亿/千亿：FSDP 如何把 Ring AllReduce 拦腰劈成两半？"
+      ],
+      "content": "Llama 3 8B 四卡训练数据传输实拍 01 四阶段全景 02 400MB桶实录 03 双流重叠时间线 04 DDP vs FSDP 正在初始化… 真实训练案例可视化 · Llama 3 8B × 4 卡数据并行（DDP / FSDP） 实拍一次大模型训练的数据传输： 15 GB 梯度如何在 4 张 GPU 间毫秒级流转？ 把抽象的 Ring AllReduce 放进真实工程现场——跟拍 Llama 3 8B（32 层 / BF16）在 4 张 GPU（rank 0 ~ 3）上跑完 1 个训练 Step：前向 0 通信、反向每层 400 MB 梯度分桶、6 轮 100 MB 环形搬运、计算与通信双跑道重叠，以及 FSDP 如何拦腰劈开省下 75% 显存！ 训练模型与精度 Llama 3 8B (BF16) 32 层 · 8.03B 参数 · 每参数 2 字节 全模型整份梯度大小 ≈ 15 GB (16.06GB) 每卡 Ring 总发送 ≈ 22.5 GB 单层梯度桶（Bucket） 400 MB / 桶 切 4 块 = 每块 100 MB · 6 轮发 600 MB 4 卡集群配置 rank 0 / 1 / 2 / 3 支持切换 NVLink / 400G IB / PCIe 实测 01 全景导览：一次训练迭代（Step t）的 4 个真实阶段 点击下方 4 个阶段按钮，鸟瞰 4 张 GPU 从“各读各的语料”到“梯度同步求平均”再到“权重完全一致更新”的完整闭环。 STAGE 1 · FORWARD 前向传播（0 通信） 4 卡各自吃不同语料，互不说话 STAGE 2 · BUCKET RING 反向分桶 + 环形同步 算完 L32 立刻打包 400MB 跑 Ring STAGE 3 · OVERLAP 双跑道高度重叠 算 L31 同时传 L32，藏掉 96% 通信 STAGE 4 · ADAMW STEP 同步更新参数权重 4 卡拿到逐比特一致梯度，权重对齐 02 放大镜实拍：第 32 层「400 MB 梯度桶」的毫秒级搬运 当第 32 层反向算完，4 张卡各自手握一份 400 MB 局部梯度，立即切成 4 块 [a, b, c, d]（每块刚好 100 MB），沿单向逻辑环跑完 3 轮 ReduceScatter + 3 轮 AllGather + 除以 4 求平均。切换下方互联总线，观察真实毫秒时钟变化！ 选择卡间互联硬件： H100 NVLink (400 GB/s · 每轮 0.25 ms) 跨机 IB 400G (50 GB/s · 每轮 2.00 ms) 普通 PCIe 4.0 (25 GB/s · 每轮 4.00 ms) ← 上一轮 下一轮 → ▶ 自动播放 重置 0.00ms切分400MB 0.25msRS 第1轮 0.50msRS 第2轮 0.75msRS 第3轮 1.00msAG 第4轮 1.25msAG 第5轮 1.50msAG 第6轮 1.50ms÷4 平均✓ 03 工程绝招：计算引擎 vs. 通信引擎「双跑道重叠」甘特图 GPU 内部的计算核心（Tensor Core）和通信引擎（NVLink / RDMA DMA）互不干扰。拖动下方滑块切换是否开启分桶重叠、单层反向计算时长以及互联带宽，亲眼看前 31 层的通信是如何被藏进计算时间里，以及带宽太低时为何会突然发生“通信排队拥堵”！ ✓ 开启分桶重叠（真实 PyTorch DDP） ✗ 关闭重叠（傻等 32 层全算完再传） 互联总线： H100 NVLink (400 GB/s → 1.5 ms/桶) 跨机 IB 400G (50 GB/s → 12.0 ms/桶) 普通 PCIe 4.0 (25 GB/s → 24.0 ms/桶) 单层反向传播计算耗时（随 Micro-Batch / 序列长度变化） 6.0 ms / 层（32 层共 192 ms） 2ms (极小Batch)6ms (常规)14ms (较大Batch)26ms (超大Batch/长上下文) 04 从 8B 迈向百亿/千亿：FSDP 如何把 Ring AllReduce 拦腰劈成两半？ 训练 Llama 3 8B 时，光 BF16 权重（16 GB）+ 梯度（16 GB）+ FP32 AdamW 优化器状态（96 GB）就要占掉整整 128 GB（单张 80GB H100 直接爆显存！）。切换下方 DDP vs. FSDP，看现代分布式框架如何仅靠“拆开 Ring 的前后两半”，就让单卡显存直降 4 倍！ 经典 DDP（完整 Ring：单卡 128 GB 爆显存！） 现代 FSDP / ZeRO-3（劈开 Ring：单卡仅 32 GB ✓） Llama 3 8B 混合精度训练状态 · 4 × H100 (80GB) 单文件离线交互式图解 · Llama 3 8B 四卡训练传输实拍（一次秒开加固架构：零 CDN / 无 svg.innerHTML / 异常隔离）",
+      "wordCount": 992,
+      "readingTime": 3,
+      "sizeBytes": 70257,
+      "createdAt": "2026-11-28T15:04:43Z",
+      "updatedAt": "2026-11-28T15:04:45Z",
+      "contentHash": "a3d083b841ac"
+    },
     {
       "id": "gpu_allreduce_guide",
       "slug": "gpu_allreduce_guide",
